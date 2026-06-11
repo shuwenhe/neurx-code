@@ -77,7 +77,7 @@ public:
     /**
      * @brief 获取Plugin系统
      */
-    std::shared_ptr<DefaultPluginManager> getPlugins() const;
+    DefaultPluginManagerPtr getPlugins() const;
 
     // ── 工具执行 ────────────────────────────────────────
 
@@ -388,7 +388,7 @@ private:
     std::shared_ptr<DefaultCodeMagic> m_codeMagic;
     std::shared_ptr<DefaultMemoryManager> m_memory;
     std::shared_ptr<DefaultApprovalManager> m_approval;
-    std::shared_ptr<DefaultPluginManager> m_plugins;
+    DefaultPluginManagerPtr m_plugins;
 
     // 任务队列
     QQueue<std::pair<ToolExecutionRequest, std::function<void(const ToolExecutionResult&)>>> m_taskQueue;

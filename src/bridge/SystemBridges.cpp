@@ -150,7 +150,7 @@ QVariantMap ApprovalToolBridge::getStatistics() const {
 
 PluginToolBridge::PluginToolBridge(
     std::shared_ptr<ClaudeToolSystem> toolSystem,
-    std::shared_ptr<DefaultPluginManager> plugins)
+    DefaultPluginManagerPtr plugins)
     : m_toolSystem(toolSystem), m_plugins(plugins) {
 }
 

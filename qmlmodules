@@ -27,6 +27,6 @@ if(APPLE)
     # Force-load the static QML resource archive so the generated
     # qInitResources_content_raw_* symbols are always linked.
     target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
-        "LINKER:-force_load,${CMAKE_BINARY_DIR}/content/libcontent.a"
+        "LINKER:-force_load,$<TARGET_FILE:content>"
     )
 endif()

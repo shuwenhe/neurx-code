@@ -8,6 +8,8 @@
 #include <QJsonObject>
 #include <QSet>
 
+namespace neurx {
+
 /**
  * @class PluginSandbox
  * @brief Plugin security and resource isolation
@@ -134,6 +136,8 @@ private:
     QString permissionToString(Permission perm) const;
 };
 
-Q_DECLARE_OPERATORS_FOR_FLAGS(PluginSandbox::Permissions)
+} // namespace neurx
+
+Q_DECLARE_OPERATORS_FOR_FLAGS(neurx::PluginSandbox::Permissions)
 
 #endif // PLUGINSANDBOX_H

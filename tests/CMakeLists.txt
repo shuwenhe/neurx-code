@@ -24,8 +24,13 @@ foreach(TEST_FILE ${TEST_SOURCES})
         Qt6::Qml
         Qt6::Quick
         neurx_core
-        neurx_ui
     )
+
+    if(APPLE)
+        target_link_options(${TEST_NAME} PRIVATE
+            "LINKER:-force_load,$<TARGET_FILE:neurx_core>"
+        )
+    endif()
     
     target_include_directories(${TEST_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../src

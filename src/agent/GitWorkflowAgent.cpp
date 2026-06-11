@@ -80,12 +80,12 @@ void GitWorkflowAgent::createSmartCommit(const QString& context,
 {
     // 1. Get Gil Context
     QString status = m_gitManager->getRepositoryStatus();
-    QString diff = m_gitManager->executeGitCommand("diff --cached");
-    if (diff.isEmpty()) {
-        diff = m_gitManager->executeGitCommand("diff");
+    QStringList changedFiles = m_gitManager->getStagedFiles();
+    if (changedFiles.isEmpty()) {
+        changedFiles = m_gitManager->getUnstagedFiles();
     }
-
-    QString recentLog = m_gitManager->executeGitCommand("log -n 5 --oneline");
+    QString diff = changedFiles.join('\n');
+    QString recentLog;
 
     // 2. Generate Commit Message with LLM
     generateCommitMessageWithLLM(diff, status, recentLog, [this, workspacePath, callback](const QString& message) {
@@ -174,8 +174,10 @@ void GitWorkflowAgent::generateCommitMessageWithLLM(const QString& diff,
     // TODO: Connect to actual LLM provider
     // For now, use the manager's basic generator as fallback
     QStringList changedFiles = m_gitManager->getStagedFiles();
+    if (changedFiles.isEmpty()) {
+        changedFiles = m_gitManager->getUnstagedFiles();
+    }
     callback(m_gitManager->generateCommitMessage(changedFiles, GitAutomationManager::Feature));
 }
 
 } // namespace neurx
-

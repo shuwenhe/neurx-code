@@ -1,6 +1,7 @@
 # CMake / Qt build outputs
 build/
 build-*/
+cmake-build-*/
 build-check/
 build-check-*/
 build-check-libs/
@@ -21,20 +22,54 @@ compile_commands.json
 *.moc
 *.qrc
 *.rcc
+.qt/
+.rcc/
+.qmlls.ini
 
-# Qt / IDE temporary files
-*.user
-*.autosave
-.qmake.stash
+# CMake autogen directories
+*_autogen/
+*_autogen_timestamp_deps/
+
+# Qt MOC and resource compiler outputs
 moc_*.cpp
 qrc_*.cpp
 ui_*.h
+*_qmltyperegistrations.cpp
+qt6*_metatypes.json
+
+# Qt Creator / IDE temporary files
+*.user
+*.user.*
+*.autosave
+.swp
+.swo
+*.orig
+*.rej
+.qmake.stash
+CMakeLists.txt.user
+CMakeLists.txt.user.*
+
+# Build metadata
+.cmake/
+.ninja_deps
+.ninja_log
+Makefile
 
 # Local NeurX runtime state (may contain secrets)
 .neurx/
-
-# Local NeurX secrets/config
 .neurx/secrets.json
 secrets.env
 .env
 *.env.local
+
+# macOS specific
+.DS_Store
+*.dSYM/
+*.su
+*.gch
+*.pch
+
+# Qt resources compiled
+qmake_*
+resources_*
+qrc_

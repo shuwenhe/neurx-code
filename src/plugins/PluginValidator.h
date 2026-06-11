@@ -7,6 +7,8 @@
 #include <QList>
 #include <QJsonObject>
 
+namespace neurx {
+
 /**
  * @class PluginValidator
  * @brief Plugin validation and verification framework
@@ -102,5 +104,7 @@ private:
     void checkForSuspiciousCode(const QString &pluginPath);
     void checkForMaliciousPatterns(const QString &filePath);
 };
+
+} // namespace neurx
 
 #endif // PLUGINVALIDATOR_H

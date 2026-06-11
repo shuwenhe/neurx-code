@@ -107,12 +107,12 @@ void DefaultLLMExtensions::setDefaultModel(const QString &modelId)
     }
 }
 
-void DefaultLLMExtensions::generateCompletion(const LLMRequest &request,
-                                             LLMCallback callback)
+void DefaultLLMExtensions::generateCompletion(const LLMTemplateRequest &request,
+                                             LLMTemplateCallback callback)
 {
     QMutexLocker locker(&m_mutex);
     
-    LLMResponse response;
+    LLMTemplateResponse response;
     response.responseId = QUuid::createUuid().toString();
     response.requestId = request.requestId;
     response.success = true;
@@ -136,11 +136,11 @@ void DefaultLLMExtensions::generateCompletion(const LLMRequest &request,
 
 void DefaultLLMExtensions::generateFromTemplate(const PromptTemplate &template_,
                                                const PromptVariables &variables,
-                                               LLMCallback callback)
+                                             LLMTemplateCallback callback)
 {
     QString renderedPrompt = renderTemplate(template_, variables);
     
-    LLMRequest request;
+    LLMTemplateRequest request;
     request.prompt = renderedPrompt;
     
     generateCompletion(request, callback);
@@ -148,9 +148,9 @@ void DefaultLLMExtensions::generateFromTemplate(const PromptTemplate &template_,
 
 void DefaultLLMExtensions::chat(const QVector<Message> &messages,
                                const ModelConfig &model,
-                               LLMCallback callback)
+                               LLMTemplateCallback callback)
 {
-    LLMRequest request;
+    LLMTemplateRequest request;
     request.messages = messages;
     
     generateCompletion(request, callback);
@@ -158,9 +158,9 @@ void DefaultLLMExtensions::chat(const QVector<Message> &messages,
 
 void DefaultLLMExtensions::summarizeText(const QString &text,
                                         int maxTokens,
-                                        LLMCallback callback)
+                                        LLMTemplateCallback callback)
 {
-    LLMRequest request;
+    LLMTemplateRequest request;
     request.prompt = "Summarize: " + text;
     request.maxTokens = maxTokens;
     
@@ -169,15 +169,15 @@ void DefaultLLMExtensions::summarizeText(const QString &text,
 
 void DefaultLLMExtensions::translateText(const QString &text,
                                         const QString &targetLanguage,
-                                        LLMCallback callback)
+                                        LLMTemplateCallback callback)
 {
-    LLMRequest request;
+    LLMTemplateRequest request;
     request.prompt = QString("Translate to %1: %2").arg(targetLanguage, text);
     
     generateCompletion(request, callback);
 }
 
-QString DefaultLLMExtensions::generateStreamingCompletion(const LLMRequest &request,
+QString DefaultLLMExtensions::generateStreamingCompletion(const LLMTemplateRequest &request,
                                                          StreamCallback chunkCallback)
 {
     QString streamId = QUuid::createUuid().toString();
@@ -256,9 +256,9 @@ QVector<FunctionDefinition> DefaultLLMExtensions::getRegisteredFunctions() const
     return m_functions.values().toVector();
 }
 
-void DefaultLLMExtensions::generateWithFunctions(const LLMRequest &request,
+void DefaultLLMExtensions::generateWithFunctions(const LLMTemplateRequest &request,
                                                const QVector<FunctionDefinition> &functions,
-                                               LLMCallback callback)
+                                               LLMTemplateCallback callback)
 {
     generateCompletion(request, callback);
 }
@@ -448,7 +448,7 @@ QVector<TokenUsage> DefaultLLMExtensions::getTokenHistory(int days) const
     return m_tokenHistory;
 }
 
-float DefaultLLMExtensions::estimateCost(const LLMRequest &request) const
+float DefaultLLMExtensions::estimateCost(const LLMTemplateRequest &request) const
 {
     int tokens = estimateTokens(request.prompt);
     return (tokens / 1000.0f) * 0.01f;
@@ -509,7 +509,7 @@ void DefaultLLMExtensions::enableRequestCaching(bool enable)
     m_cachingEnabled = enable;
 }
 
-LLMResponse DefaultLLMExtensions::getCachedResponse(const QString &prompt) const
+LLMTemplateResponse DefaultLLMExtensions::getCachedResponse(const QString &prompt) const
 {
     QMutexLocker locker(&m_mutex);
     
@@ -518,7 +518,7 @@ LLMResponse DefaultLLMExtensions::getCachedResponse(const QString &prompt) const
         return *it;
     }
     
-    return LLMResponse();
+    return LLMTemplateResponse();
 }
 
 void DefaultLLMExtensions::clearCache(std::function<void(bool success)> callback)
@@ -569,7 +569,7 @@ void DefaultLLMExtensions::enableAutoRetry(int maxRetries, int backoffMs)
     m_backoffMs = backoffMs;
 }
 
-void DefaultLLMExtensions::retryLastRequest(LLMCallback callback)
+void DefaultLLMExtensions::retryLastRequest(LLMTemplateCallback callback)
 {
     generateCompletion(m_lastRequest, callback);
 }

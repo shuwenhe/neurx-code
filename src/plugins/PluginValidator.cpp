@@ -9,6 +9,8 @@
 #include <QVersionNumber>
 #include <QCryptographicHash>
 
+namespace neurx {
+
 PluginValidator::PluginValidator()
 {
     // Initialize default validation rules
@@ -415,3 +417,5 @@ QString PluginValidator::ValidationResult::summary() const
 
     return summary;
 }
+
+} // namespace neurx

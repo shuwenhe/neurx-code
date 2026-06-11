@@ -60,7 +60,7 @@ class PluginToolBridge {
 public:
     explicit PluginToolBridge(
         std::shared_ptr<ClaudeToolSystem> toolSystem,
-        std::shared_ptr<DefaultPluginManager> plugins);
+        DefaultPluginManagerPtr plugins);
 
     bool discoverAndRegisterPluginTools();
     void onPluginLoaded(const QString &pluginId);
@@ -68,7 +68,7 @@ public:
 
 private:
     std::shared_ptr<ClaudeToolSystem> m_toolSystem;
-    std::shared_ptr<DefaultPluginManager> m_plugins;
+    DefaultPluginManagerPtr m_plugins;
     QSet<QString> m_registeredPluginTools;
 };
 

@@ -59,33 +59,33 @@ public:
     // ── Text Generation ────────────────────────────────
     
     /// Generate completion
-    virtual void generateCompletion(const LLMRequest &request,
-                                   LLMCallback callback = nullptr) = 0;
+    virtual void generateCompletion(const LLMTemplateRequest &request,
+                                   LLMTemplateCallback callback = nullptr) = 0;
     
     /// Generate with template
     virtual void generateFromTemplate(const PromptTemplate &template_,
                                      const PromptVariables &variables,
-                                     LLMCallback callback = nullptr) = 0;
+                                     LLMTemplateCallback callback = nullptr) = 0;
     
     /// Chat/conversation
     virtual void chat(const QVector<Message> &messages,
                      const ModelConfig &model,
-                     LLMCallback callback = nullptr) = 0;
+                     LLMTemplateCallback callback = nullptr) = 0;
     
     /// Summarize text
     virtual void summarizeText(const QString &text,
                               int maxTokens = 500,
-                              LLMCallback callback = nullptr) = 0;
+                              LLMTemplateCallback callback = nullptr) = 0;
     
     /// Translate text
     virtual void translateText(const QString &text,
                               const QString &targetLanguage,
-                              LLMCallback callback = nullptr) = 0;
+                              LLMTemplateCallback callback = nullptr) = 0;
     
     // ── Streaming ───────────────────────────────────────
     
     /// Generate with streaming
-    virtual QString generateStreamingCompletion(const LLMRequest &request,
+    virtual QString generateStreamingCompletion(const LLMTemplateRequest &request,
                                                StreamCallback chunkCallback = nullptr) = 0;
     
     /// Cancel streaming
@@ -109,9 +109,9 @@ public:
     virtual QVector<FunctionDefinition> getRegisteredFunctions() const = 0;
     
     /// Generate with functions
-    virtual void generateWithFunctions(const LLMRequest &request,
+    virtual void generateWithFunctions(const LLMTemplateRequest &request,
                                       const QVector<FunctionDefinition> &functions,
-                                      LLMCallback callback = nullptr) = 0;
+                                      LLMTemplateCallback callback = nullptr) = 0;
     
     /// Execute function call
     virtual void executeFunctionCall(const FunctionCall &call,
@@ -182,7 +182,7 @@ public:
     // ── Cost Tracking ───────────────────────────────────
     
     /// Get estimated cost
-    virtual float estimateCost(const LLMRequest &request) const = 0;
+    virtual float estimateCost(const LLMTemplateRequest &request) const = 0;
     
     /// Get total cost
     virtual float getTotalCost() const = 0;
@@ -210,7 +210,7 @@ public:
     virtual void enableRequestCaching(bool enable) = 0;
     
     /// Get cached response
-    virtual LLMResponse getCachedResponse(const QString &prompt) const = 0;
+    virtual LLMTemplateResponse getCachedResponse(const QString &prompt) const = 0;
     
     /// Clear cache
     virtual void clearCache(std::function<void(bool success)> callback = nullptr) = 0;
@@ -238,7 +238,7 @@ public:
     virtual void enableAutoRetry(int maxRetries, int backoffMs = 1000) = 0;
     
     /// Retry last request
-    virtual void retryLastRequest(LLMCallback callback = nullptr) = 0;
+    virtual void retryLastRequest(LLMTemplateCallback callback = nullptr) = 0;
     
     // ── Statistics ──────────────────────────────────────
     
@@ -261,7 +261,7 @@ public:
 
 signals:
     /// Generation completed signal
-    void generationCompleted(const LLMResponse &response);
+    void generationCompleted(const LLMTemplateResponse &response);
     
     /// Stream chunk received signal
     void streamChunkReceived(const StreamChunk &chunk);
@@ -280,3 +280,6 @@ signals:
 };
 
 using LLMExtensionsPtr = std::shared_ptr<LLMExtensions>;
+
+// Meta-type declarations for Q_DECLARE_METATYPE
+Q_DECLARE_METATYPE(LLMTemplateResponse)

@@ -247,6 +247,7 @@ QString AgentEngine::approvalRiskLevel(const ToolCall &call) const
         || toolName == QStringLiteral("apply_patch")
         || toolName == QStringLiteral("file_system")
         || toolName == QStringLiteral("codex_file_system")
+        || toolName == QStringLiteral("file_creation")
         || toolName == QStringLiteral("github")
         || toolName == QStringLiteral("gitlab")
         || toolName == QStringLiteral("jira"))
@@ -287,6 +288,11 @@ QString AgentEngine::approvalResourceForCall(const ToolCall &call) const
         return destination.isEmpty()
             ? QStringLiteral("%1 %2").arg(op, path)
             : QStringLiteral("%1 %2 -> %3").arg(op, path, destination);
+    }
+    if (toolName == QStringLiteral("file_creation")) {
+        const QString op = call.arguments.value(QStringLiteral("operation")).toString();
+        const QString path = call.arguments.value(QStringLiteral("path")).toString();
+        return QStringLiteral("%1 %2").arg(op, path);
     }
     if (toolName == QStringLiteral("codex_agent")) {
         const QString filePath = call.arguments.value(QStringLiteral("file_path")).toString();

@@ -1,13 +1,11 @@
 #include "PluginLoader.h"
 #include <QLibrary>
 #include <QFileInfo>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonArray>
-#include <QFile>
 #include <QDir>
+#include <QJsonDocument>
 #include <QDebug>
-#include <QSysInfo>
+
+namespace neurx {
 
 PluginLoader::PluginLoader()
 {
@@ -273,51 +271,45 @@ bool PluginLoader::validatePlugin(PluginInterface *plugin)
     return true;
 }
 
+QJsonObject PluginLoader::savePluginState(PluginInterface *plugin)
+{
+    QJsonObject state;
+
+    if (!plugin) {
+        return state;
+    }
+
+    state.insert(QStringLiteral("pluginId"), plugin->pluginId());
+    state.insert(QStringLiteral("configuration"), plugin->getConfiguration());
+    state.insert(QStringLiteral("state"), static_cast<int>(plugin->state()));
+    state.insert(QStringLiteral("lastError"), plugin->getLastError());
+    return state;
+}
+
+bool PluginLoader::restorePluginState(PluginInterface *plugin, const QJsonObject &state)
+{
+    if (!plugin) {
+        m_lastError = "Plugin pointer is null";
+        return false;
+    }
+
+    const QJsonValue configValue = state.value(QStringLiteral("configuration"));
+    if (configValue.isObject()) {
+        return plugin->configure(configValue.toObject());
+    }
+
+    return true;
+}
+
 QString PluginLoader::getPlatformSuffix() const
 {
-#if defined(Q_OS_WIN)
+#ifdef Q_OS_WIN
     return ".dll";
-#elif defined(Q_OS_MACOS)
+#elif defined(Q_OS_MAC)
     return ".dylib";
 #else
     return ".so";
 #endif
 }
 
-QString PluginLoader::getPluginPath(const QString &pluginId) const
-{
-    auto it = m_loadedPlugins.find(pluginId);
-    if (it != m_loadedPlugins.end() && it.value().library) {
-        return it.value().library->fileName();
-    }
-    return QString();
-}
-
-QJsonObject PluginLoader::savePluginState(PluginInterface *plugin)
-{
-    if (!plugin) {
-        return QJsonObject();
-    }
-
-    QJsonObject state;
-    state["pluginId"] = plugin->pluginId();
-    state["configuration"] = plugin->getConfiguration();
-    state["state"] = plugin->stateString();
-
-    return state;
-}
-
-bool PluginLoader::restorePluginState(PluginInterface *plugin, const QJsonObject &state)
-{
-    if (!plugin || state.isEmpty()) {
-        return false;
-    }
-
-    // Restore configuration
-    QJsonObject config = state.value("configuration").toObject();
-    if (!config.isEmpty()) {
-        plugin->configure(config);
-    }
-
-    return true;
-}
+} // namespace neurx

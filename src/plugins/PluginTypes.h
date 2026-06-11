@@ -6,6 +6,8 @@
 #include <QDateTime>
 #include <QVersionNumber>
 
+namespace neurx {
+
 /**
  * @class PluginTypes
  * @brief Plugin system type definitions
@@ -19,7 +21,7 @@
 
 // ── Plugin Metadata ────────────────────────────────────────────
 
-struct PluginMetadata {
+struct CorePluginMetadata {
     QString id;                          ///< Unique plugin ID (e.g., "org.neurx.plugin.git")
     QString name;                        ///< Human-readable name
     QString version;                     ///< Plugin version (semantic versioning)
@@ -103,7 +105,7 @@ enum class PluginError {
 // ── Plugin Manifest ────────────────────────────────────────────
 
 struct PluginManifest {
-    PluginMetadata metadata;
+    CorePluginMetadata metadata;
     PluginCapabilities capabilities;
     QVector<PluginDependency> dependencies;
     
@@ -125,7 +127,7 @@ struct PluginManifest {
 
 struct PluginInstance {
     QString id;
-    PluginMetadata metadata;
+    CorePluginMetadata metadata;
     PluginStatus status{PluginStatus::Available};
     QString statusMessage;
     
@@ -146,7 +148,7 @@ struct PluginInstance {
 // ── Plugin Registry Entry ──────────────────────────────────────
 
 struct PluginRegistryEntry {
-    PluginMetadata metadata;
+    CorePluginMetadata metadata;
     PluginStatus status{PluginStatus::Available};
     QString installPath;
     QString version;
@@ -216,3 +218,5 @@ struct PluginEvent {
 using PluginCallback = std::function<void(PluginError, const PluginInstance &)>;
 using PluginListCallback = std::function<void(PluginError, const QVector<PluginInstance> &)>;
 using MarketplaceCallback = std::function<void(PluginError, const QVector<MarketplacePlugin> &)>;
+
+} // namespace neurx

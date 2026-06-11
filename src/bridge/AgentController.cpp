@@ -718,6 +718,20 @@ static QString toolEventPreview(const QString &toolName, const QJsonObject &args
     return logPreview(preview, maxLen);
 }
 
+static bool isWorkspaceMutatingTool(const QString &toolName)
+{
+    return toolName == QStringLiteral("file_system")
+        || toolName == QStringLiteral("codex_file_system")
+        || toolName == QStringLiteral("file_creation")
+        || toolName == QStringLiteral("smart_file_creator")
+        || toolName == QStringLiteral("incremental_edit")
+        || toolName == QStringLiteral("edit_file")
+        || toolName == QStringLiteral("multi_edit")
+        || toolName == QStringLiteral("apply_patch")
+        || toolName == QStringLiteral("patch")
+        || toolName == QStringLiteral("file_sync");
+}
+
 static bool isPatchLikeTool(const QString &toolName)
 {
     return toolName == QStringLiteral("patch")
@@ -1827,6 +1841,8 @@ static QStringList inferredToolTags(const QString &toolName)
         return {QStringLiteral("files"), QStringLiteral("workspace"), QStringLiteral("io")};
     if (toolName == QStringLiteral("codex_file_system"))
         return {QStringLiteral("files"), QStringLiteral("workspace"), QStringLiteral("codex")};
+    if (toolName == QStringLiteral("file_creation"))
+        return {QStringLiteral("files"), QStringLiteral("workspace"), QStringLiteral("creation")};
     if (toolName == QStringLiteral("smart_file_creator"))
         return {QStringLiteral("files"), QStringLiteral("workspace"), QStringLiteral("scaffold")};
     if (toolName == QStringLiteral("patch") || toolName == QStringLiteral("apply_patch"))
@@ -1872,6 +1888,7 @@ QString AgentController::approvalRiskLevelForTool(const QString &toolName, const
 
     if (name == QStringLiteral("file_system")
         || name == QStringLiteral("codex_file_system")
+        || name == QStringLiteral("file_creation")
         || name == QStringLiteral("smart_file_creator")
         || name == QStringLiteral("patch")
         || name == QStringLiteral("apply_patch")
@@ -1917,6 +1934,10 @@ bool AgentController::toolNeedsApproval(const QString &toolName, const QVariantM
         resource = destination.isEmpty()
             ? QStringLiteral("%1 %2").arg(op, path)
             : QStringLiteral("%1 %2 -> %3").arg(op, path, destination);
+    } else if (toolName == QStringLiteral("file_creation")) {
+        const QString op = arguments.value(QStringLiteral("operation")).toString();
+        const QString path = arguments.value(QStringLiteral("path")).toString();
+        resource = QStringLiteral("%1 %2").arg(op, path);
     } else if (toolName == QStringLiteral("smart_file_creator")) {
         resource = QStringLiteral("create %1").arg(arguments.value(QStringLiteral("path")).toString());
     } else if (toolName == QStringLiteral("update_plan")) {
@@ -2403,6 +2424,18 @@ QVariantMap AgentController::executeToolByName(const QString &toolName, const QV
         response.insert(QStringLiteral("error"), toolResult.content);
         emit errorOccurred(toolResult.content);
     } else {
+        if (toolName == QStringLiteral("file_creation")) {
+            const QString resolvedPath = resolveCodexWorkspacePath(arguments.value(QStringLiteral("path")).toString());
+            if (!resolvedPath.isEmpty()) {
+                syncOpenDocumentAfterWrite(resolvedPath,
+                                           arguments.value(QStringLiteral("content")).toString());
+            }
+        }
+        if (isWorkspaceMutatingTool(toolName)) {
+            if (m_workspaceIndex)
+                m_workspaceIndex->refresh();
+            refreshSystemPrompt();
+        }
         emit successOccurred(QStringLiteral("%1 completed.").arg(toolName));
     }
     return response;
@@ -2456,7 +2489,44 @@ QVariantMap AgentController::createFileWithCodex(const QString &filePath,
                                                  const QString &model,
                                                  const QString &workingDir)
 {
-    return writeFileWithCodex(filePath, content, model, workingDir);
+    const QString absolutePath = resolveCodexWorkspacePath(filePath);
+    if (absolutePath.isEmpty()) {
+        return {{QStringLiteral("error"), QStringLiteral("Target file must be inside the current workspace.")}};
+    }
+
+    const QFileInfo existingInfo(absolutePath);
+    if (existingInfo.exists()) {
+        return {{QStringLiteral("error"), QStringLiteral("Target file already exists.")}};
+    }
+
+    QVariantMap result;
+    if (m_registry && m_registry->tool(QStringLiteral("file_creation"))) {
+        QVariantMap arguments;
+        arguments.insert(QStringLiteral("operation"), QStringLiteral("create_file"));
+        arguments.insert(QStringLiteral("path"), absolutePath);
+        arguments.insert(QStringLiteral("content"), content);
+        arguments.insert(QStringLiteral("overwrite"), false);
+        arguments.insert(QStringLiteral("create_dirs"), true);
+        arguments.insert(QStringLiteral("line_ending"), QStringLiteral("auto"));
+        result = executeToolByName(QStringLiteral("file_creation"), arguments);
+        if (result.contains(QStringLiteral("pending")) && result.value(QStringLiteral("pending")).toBool())
+            return result;
+    } else {
+        result = executeCodexFileWrite(absolutePath, content);
+        if (result.contains(QStringLiteral("pending")) && result.value(QStringLiteral("pending")).toBool())
+            return result;
+    }
+
+    if (!result.contains(QStringLiteral("error"))) {
+        syncOpenDocumentAfterWrite(absolutePath, content);
+        if (m_workspaceIndex)
+            m_workspaceIndex->refresh();
+        refreshSystemPrompt();
+        saveSettings();
+        saveTaskSession();
+    }
+
+    return result;
 }
 
 QVariantMap AgentController::createDirectoryWithCodex(const QString &dirPath)
@@ -3275,6 +3345,8 @@ QString AgentController::inferExecutionKind(const QString &toolName) const
         return QStringLiteral("command_execution");
     if (toolName == QStringLiteral("patch") || toolName == QStringLiteral("apply_patch"))
         return QStringLiteral("file_change");
+    if (toolName == QStringLiteral("file_creation"))
+        return QStringLiteral("file_change");
     if (toolName == QStringLiteral("search"))
         return QStringLiteral("search");
     if (toolName == QStringLiteral("web_search") || toolName == QStringLiteral("web_fetch"))
@@ -3559,6 +3631,7 @@ void AgentController::configurePolicyManagers()
             fileRule.action = QStringLiteral("prompt");
             fileRule.toolNames = {QStringLiteral("file_system"),
                                   QStringLiteral("codex_file_system"),
+                                  QStringLiteral("file_creation"),
                                   QStringLiteral("patch"),
                                   QStringLiteral("apply_patch"),
                                   QStringLiteral("run_command")};
@@ -5773,9 +5846,13 @@ void AgentController::onToolFinished(const ToolResult &result)
 
     if (!result.isError
         && (result.name == QStringLiteral("file_system")
+            || result.name == QStringLiteral("codex_file_system")
+            || result.name == QStringLiteral("file_creation")
             || result.name == QStringLiteral("apply_patch")
             || result.name == QStringLiteral("patch")
             || result.name == QStringLiteral("checkpoint"))) {
+        if (m_workspaceIndex)
+            m_workspaceIndex->refresh();
         emit recentCheckpointsChanged();
     }
     m_runningToolOutput.remove(result.callId);

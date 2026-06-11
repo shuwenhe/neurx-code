@@ -9,6 +9,8 @@
 #include <QNetworkRequest>
 #include <QUrl>
 
+namespace neurx {
+
 DefaultPluginManager::DefaultPluginManager(QObject *parent)
     : PluginManager(parent)
 {
@@ -852,4 +854,9 @@ bool DefaultPluginManager::validateDependencyVersion(const QString &required, co
     return required == actual;
 }
 
-#include "moc_DefaultPluginManager.cpp"
+QVariantMap DefaultPluginManager::loadJsonManifest(const QString &filePath)
+{
+    return QVariantMap();
+}
+
+} // namespace neurx

@@ -4,6 +4,8 @@
 #include <QObject>
 #include <memory>
 
+namespace neurx {
+
 /**
  * @class PluginManager
  * @brief Abstract plugin management interface
@@ -195,4 +197,6 @@ signals:
     void pluginError(const QString &pluginId, PluginError error, const QString &message);
 };
 
-using PluginManagerPtr = std::shared_ptr<PluginManager>;
+} // namespace neurx
+
+using PluginManagerPtr = std::shared_ptr<neurx::PluginManager>;

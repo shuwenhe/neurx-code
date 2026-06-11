@@ -109,8 +109,10 @@ struct PromptVariables {
 };
 
 // ── LLM Request/Response ───────────────────────────────
+// Note: These are extension/template types.
+// For provider request/response, see LLMProvider.h (ProviderLLMRequest, ProviderLLMResponse)
 
-struct LLMRequest {
+struct LLMTemplateRequest {
     QString requestId;
     ModelConfig model;
     
@@ -131,7 +133,7 @@ struct LLMRequest {
     int timeoutMs = 30000;         // Request timeout
 };
 
-struct LLMResponse {
+struct LLMTemplateResponse {
     QString responseId;
     QString requestId;
     
@@ -292,7 +294,7 @@ struct ProviderConfig {
 
 // ── Callbacks ──────────────────────────────────────────
 
-using LLMCallback = std::function<void(const LLMResponse &)>;
+using LLMTemplateCallback = std::function<void(const LLMTemplateResponse &)>;
 using TokenCallback = std::function<void(const TokenUsage &)>;
 using StreamCallback = std::function<void(const StreamChunk &)>;
 using ModelListCallback = std::function<void(const QVector<ModelInfo> &)>;

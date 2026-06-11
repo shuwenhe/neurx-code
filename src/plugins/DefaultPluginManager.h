@@ -6,6 +6,8 @@
 #include <QMap>
 #include <QMutex>
 
+namespace neurx {
+
 /**
  * @class DefaultPluginManager
  * @brief Default plugin manager implementation
@@ -137,4 +139,6 @@ private:
     QVariantMap loadJsonManifest(const QString &filePath);
 };
 
-using DefaultPluginManagerPtr = std::shared_ptr<DefaultPluginManager>;
+} // namespace neurx
+
+using DefaultPluginManagerPtr = std::shared_ptr<neurx::DefaultPluginManager>;

@@ -9,7 +9,14 @@
 /**
  * @file LLMProviderTypes.h
  * @brief LLM提供商类型定义
+ *
+ * Deprecated legacy compatibility header.
+ * New code should use:
+ * - LLMTypes.h for template/request helpers
+ * - LLMProvider.h for provider request/response types
  */
+
+namespace legacy_llm {
 
 // ── LLM模型类型 ────────────────────────────────
 
@@ -191,3 +198,5 @@ using LLMResponseCallback = std::function<void(const LLMResponse&)>;
 using LLMAnalysisCallback = std::function<void(const LLMAnalysisResult&)>;
 using LLMGenerationCallback = std::function<void(const LLMGeneratedCode&)>;
 using LLMProgressCallback = std::function<void(const QString& message, int progress)>;
+
+} // namespace legacy_llm

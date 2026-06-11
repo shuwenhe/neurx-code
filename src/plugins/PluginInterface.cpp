@@ -1,5 +1,7 @@
 #include "PluginInterface.h"
 
+namespace neurx {
+
 PluginInterface::PluginInterface(QObject *parent)
     : QObject(parent), m_state(Unloaded)
 {
@@ -20,3 +22,5 @@ QString PluginInterface::stateString() const
     default: return "Unknown";
     }
 }
+
+} // namespace neurx

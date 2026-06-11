@@ -46,7 +46,7 @@ bool ToolBridge::initialize(AgentController *controller) {
         m_codeMagic = std::make_shared<DefaultCodeMagic>();
         m_memory = std::make_shared<DefaultMemoryManager>();
         m_approval = std::make_shared<DefaultApprovalManager>();
-        m_plugins = std::make_shared<DefaultPluginManager>();
+        m_plugins = std::make_shared<neurx::DefaultPluginManager>();
 
         // 初始化各个子系统
         if (!m_codeMagic || !m_memory || !m_approval || !m_plugins) {
@@ -117,7 +117,7 @@ std::shared_ptr<DefaultApprovalManager> ToolBridge::getApproval() const {
     return m_approval;
 }
 
-std::shared_ptr<DefaultPluginManager> ToolBridge::getPlugins() const {
+DefaultPluginManagerPtr ToolBridge::getPlugins() const {
     QMutexLocker locker(&m_mutex);
     return m_plugins;
 }

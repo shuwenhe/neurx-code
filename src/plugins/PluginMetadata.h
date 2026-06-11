@@ -7,6 +7,8 @@
 #include <QJsonArray>
 #include <QVersionNumber>
 
+namespace neurx {
+
 /**
  * @class PluginMetadata
  * @brief Plugin metadata and manifest information
@@ -126,5 +128,7 @@ private:
 
     void validate();
 };
+
+} // namespace neurx
 
 #endif // PLUGINMETADATA_H

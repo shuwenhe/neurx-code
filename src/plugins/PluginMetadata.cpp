@@ -1,7 +1,9 @@
 #include "PluginMetadata.h"
-#include <QJsonDocument>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QDebug>
+
+namespace neurx {
 
 PluginMetadata::PluginMetadata()
     : m_version(0, 0, 1), m_loadPriority(0), m_autoLoad(false)
@@ -194,20 +196,6 @@ QString PluginMetadata::summary() const
 
 void PluginMetadata::validate()
 {
-    m_validationError.clear();
-
-    if (m_id.isEmpty()) {
-        m_validationError = "Plugin ID is required";
-        return;
-    }
-
-    if (m_name.isEmpty()) {
-        m_validationError = "Plugin name is required";
-        return;
-    }
-
-    if (m_version.isNull()) {
-        m_validationError = "Plugin version is invalid";
-        return;
-    }
 }
+
+} // namespace neurx

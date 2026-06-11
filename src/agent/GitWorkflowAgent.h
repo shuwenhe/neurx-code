@@ -4,10 +4,10 @@
 #include <QStringList>
 #include <QVariantMap>
 
-namespace neurx {
-
 class GitAutomationManager;
 class CommitCommandManager;
+
+namespace neurx {
 
 /**
  * @class GitWorkflowAgent
@@ -51,4 +51,3 @@ private:
 };
 
 } // namespace neurx
-

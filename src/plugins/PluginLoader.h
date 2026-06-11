@@ -9,6 +9,8 @@
 #include <QJsonObject>
 #include <functional>
 
+namespace neurx {
+
 /**
  * @class PluginLoader
  * @brief Dynamic plugin loading and unloading system
@@ -100,5 +102,7 @@ private:
     bool validatePlugin(PluginInterface *plugin);
     QString getPlatformSuffix() const;
 };
+
+} // namespace neurx
 
 #endif // PLUGINLOADER_H

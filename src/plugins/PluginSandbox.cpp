@@ -5,6 +5,8 @@
 #include <QDateTime>
 #include <QDebug>
 
+namespace neurx {
+
 PluginSandbox::PluginSandbox()
 {
 }
@@ -486,3 +488,5 @@ QString PluginSandbox::permissionToString(Permission perm) const
     default: return "";
     }
 }
+
+} // namespace neurx

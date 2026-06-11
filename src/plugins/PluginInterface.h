@@ -6,6 +6,8 @@
 #include <QJsonObject>
 #include <QString>
 
+namespace neurx {
+
 /**
  * @class PluginInterface
  * @brief Base interface for all plugins
@@ -207,6 +209,8 @@ private:
     QString m_lastError;
 };
 
-Q_DECLARE_INTERFACE(PluginInterface, "org.neurx.PluginInterface/1.0")
+} // namespace neurx
+
+Q_DECLARE_INTERFACE(neurx::PluginInterface, "org.neurx.PluginInterface/1.0")
 
 #endif // PLUGININTERFACE_H

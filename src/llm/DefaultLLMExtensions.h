@@ -38,23 +38,23 @@ public:
     void setDefaultModel(const QString &modelId) override;
     
     // Text Generation
-    void generateCompletion(const LLMRequest &request,
-                           LLMCallback callback = nullptr) override;
+    void generateCompletion(const LLMTemplateRequest &request,
+                           LLMTemplateCallback callback = nullptr) override;
     void generateFromTemplate(const PromptTemplate &template_,
                              const PromptVariables &variables,
-                             LLMCallback callback = nullptr) override;
+                             LLMTemplateCallback callback = nullptr) override;
     void chat(const QVector<Message> &messages,
              const ModelConfig &model,
-             LLMCallback callback = nullptr) override;
+             LLMTemplateCallback callback = nullptr) override;
     void summarizeText(const QString &text,
                       int maxTokens = 500,
-                      LLMCallback callback = nullptr) override;
+                      LLMTemplateCallback callback = nullptr) override;
     void translateText(const QString &text,
                       const QString &targetLanguage,
-                      LLMCallback callback = nullptr) override;
+                      LLMTemplateCallback callback = nullptr) override;
     
     // Streaming
-    QString generateStreamingCompletion(const LLMRequest &request,
+    QString generateStreamingCompletion(const LLMTemplateRequest &request,
                                        StreamCallback chunkCallback = nullptr) override;
     void cancelStreaming(const QString &streamId,
                         std::function<void(bool success)> callback = nullptr) override;
@@ -66,9 +66,9 @@ public:
     void unregisterFunction(const QString &functionId,
                            std::function<void(bool success)> callback = nullptr) override;
     QVector<FunctionDefinition> getRegisteredFunctions() const override;
-    void generateWithFunctions(const LLMRequest &request,
+    void generateWithFunctions(const LLMTemplateRequest &request,
                               const QVector<FunctionDefinition> &functions,
-                              LLMCallback callback = nullptr) override;
+                              LLMTemplateCallback callback = nullptr) override;
     void executeFunctionCall(const FunctionCall &call,
                             std::function<void(const QVariant &result)> callback = nullptr) override;
     
@@ -105,7 +105,7 @@ public:
     QVector<TokenUsage> getTokenHistory(int days = 7) const override;
     
     // Cost Tracking
-    float estimateCost(const LLMRequest &request) const override;
+    float estimateCost(const LLMTemplateRequest &request) const override;
     float getTotalCost() const override;
     QVariantMap getCostBreakdown() const override;
     
@@ -117,7 +117,7 @@ public:
     
     // Caching & Optimization
     void enableRequestCaching(bool enable) override;
-    LLMResponse getCachedResponse(const QString &prompt) const override;
+    LLMTemplateResponse getCachedResponse(const QString &prompt) const override;
     void clearCache(std::function<void(bool success)> callback = nullptr) override;
     void enableResponseOptimization(bool enable) override;
     
@@ -129,7 +129,7 @@ public:
     // Error Handling & Retry
     QString getLastError() const override;
     void enableAutoRetry(int maxRetries, int backoffMs = 1000) override;
-    void retryLastRequest(LLMCallback callback = nullptr) override;
+    void retryLastRequest(LLMTemplateCallback callback = nullptr) override;
     
     // Statistics
     QVariantMap getRequestStatistics() const override;
@@ -145,9 +145,9 @@ private:
     QMap<QString, ModelConfig> m_customModels;
     QMap<QString, PromptTemplate> m_templates;
     QMap<QString, FunctionDefinition> m_functions;
-    QMap<QString, LLMResponse> m_responseCache;
+    QMap<QString, LLMTemplateResponse> m_responseCache;
     QMap<QString, StreamChunk> m_activeStreams;
-    QMap<QString, LLMRequest> m_requestHistory;
+    QMap<QString, LLMTemplateRequest> m_requestHistory;
     
     QVector<TokenUsage> m_tokenHistory;
     TokenBudget m_tokenBudget;
@@ -170,7 +170,7 @@ private:
     int m_rateLimit = 100;
     
     QString m_lastError;
-    LLMRequest m_lastRequest;
+    LLMTemplateRequest m_lastRequest;
     
     mutable QMutex m_mutex;
     
