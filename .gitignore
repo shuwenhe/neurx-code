@@ -41,6 +41,8 @@ qt6*_metatypes.json
 *.user
 *.user.*
 *.autosave
+.qtcreator/
+.vscode/
 .swp
 .swo
 *.orig
@@ -68,8 +70,12 @@ secrets.env
 *.su
 *.gch
 *.pch
+# Claude/Agent specific
+.claude-approval.json
+MIGRATION_COMPLETE.sh
+
 
 # Qt resources compiled
 qmake_*
 resources_*
-qrc_
+qrc_*
