@@ -166,10 +166,151 @@ void TestAnalyzerAgent::executeTask(const AgentTask& task,
 
 void TestAnalyzerAgent::cancelTask(const QString& taskId) {}
 
+// WebTestingAgent implementation
+WebTestingAgent::WebTestingAgent(QObject* parent)
+    : SpecializedAgent(AgentConfig{
+        "web-tester",
+        "Web Tester",
+        "Expert in web application testing using Playwright",
+        AgentExpertise::Testing,
+        "You are an expert in web application testing. Use Playwright to interact with local web apps.\n\n"
+        "Follow the 'Reconnaissance-then-action' pattern:\n"
+        "1. Start the server (if needed) using 'scripts/with_server.py'\n"
+        "2. Navigate to the app and wait for 'networkidle'\n"
+        "3. Take screenshots or inspect the DOM to identify selectors\n"
+        "4. Execute automation logic with discovered selectors\n\n"
+        "Always run scripts with --help first. Use sync_playwright() and always close the browser.",
+        "gpt-4o",
+        0.2,
+        4000,
+        128000,
+        {"run_script", "read_file", "list_dir"},
+        {},
+        {},
+        true,
+        300,
+        2,
+        true,
+        "Which web app should I test?",
+        {},
+        {{"helper_script", "scripts/with_server.py"}}
+    }, parent)
+{
+}
+
+void WebTestingAgent::executeTask(const AgentTask& task,
+                                 std::function<void(const AgentResult&)> callback)
+{
+    AgentResult result;
+    result.success = true;
+    result.taskId = task.taskId;
+    result.agentId = id();
+    result.result = "Testing web app with Playwright: " + task.query;
+    callback(result);
+}
+
+void WebTestingAgent::cancelTask(const QString& taskId) {}
+
+// DocCoauthoringAgent implementation
+DocCoauthoringAgent::DocCoauthoringAgent(QObject* parent)
+    : SpecializedAgent(AgentConfig{
+        "doc-coauthor",
+        "Doc Co-author",
+        "Expert in structured document co-authoring",
+        AgentExpertise::Documentation,
+        "You are an expert documentation guide. Follow the three-stage workflow:\n\n"
+        "STAGE 1: Context Gathering (understand audience, goals, and gather meta-context)\n"
+        "STAGE 2: Refinement & Structure (build section-by-section through brainstorming and curation)\n"
+        "STAGE 3: Reader Testing (verify with a fresh Claude sub-agent to catch blind spots)\n\n"
+        "Act as an active guide, walking the user through these stages. For Reader Testing, "
+        "always use a fresh sub-agent without the current conversation context.",
+        "gpt-4o",
+        0.3,
+        4000,
+        128000,
+        {"read_file", "write_file"},
+        {},
+        {},
+        false,
+        600,
+        1,
+        true,
+        "What document are we writing today?",
+        {},
+        {}
+    }, parent)
+{
+}
+
+void DocCoauthoringAgent::executeTask(const AgentTask& task,
+                                     std::function<void(const AgentResult&)> callback)
+{
+    AgentResult result;
+    result.success = true;
+    result.taskId = task.taskId;
+    result.agentId = id();
+    result.result = "Co-authoring document: " + task.query;
+    callback(result);
+}
+
+void DocCoauthoringAgent::cancelTask(const QString& taskId) {}
+
+// AlgorithmicArtAgent implementation
+AlgorithmicArtAgent::AlgorithmicArtAgent(QObject* parent)
+    : SpecializedAgent(AgentConfig{
+        "art-creator",
+        "Algorithmic Art Creator",
+        "Expert in creating generative art using p5.js",
+        AgentExpertise::General,
+        "You are an expert in computational aesthetics. Follow this two-step process:\n\n"
+        "1. ALGORITHMIC PHILOSOPHY CREATION: Create a 4-6 paragraph manifesto (.md) for a generative movement. "
+        "Focus on emergent behavior, seeded randomness, and master-level craftsmanship.\n"
+        "2. P5.JS IMPLEMENTATION: Express the philosophy through code. Use 'templates/viewer.html' as the foundation. "
+        "Keep Anthropic branding and seed controls fixed; customize the algorithm and parameters.\n\n"
+        "Always use seeded randomness (randomSeed/noiseSeed) for reproducibility.",
+        "gpt-4o",
+        0.7,
+        4000,
+        128000,
+        {"write_file"},
+        {},
+        {},
+        false,
+        300,
+        1,
+        true,
+        "What kind of algorithmic art should I create?",
+        {},
+        {{"template", "templates/viewer.html"}}
+    }, parent)
+{
+}
+
+void AlgorithmicArtAgent::executeTask(const AgentTask& task,
+                                     std::function<void(const AgentResult&)> callback)
+{
+    AgentResult result;
+    result.success = true;
+    result.taskId = task.taskId;
+    result.agentId = id();
+    result.result = "Creating algorithmic art: " + task.query;
+    callback(result);
+}
+
+void AlgorithmicArtAgent::cancelTask(const QString& taskId) {}
+
 // AgentOrchestrator implementation
 AgentOrchestrator::AgentOrchestrator(QObject* parent)
     : QObject(parent), m_llmProvider(nullptr), m_toolRegistry(nullptr)
 {
+    // Register default agents
+    registerAgent(std::make_shared<CodeExplorerAgent>(this));
+    registerAgent(std::make_shared<CodeArchitectAgent>(this));
+    registerAgent(std::make_shared<CodeReviewerAgent>(this));
+    registerAgent(std::make_shared<TestAnalyzerAgent>(this));
+    registerAgent(std::make_shared<WebTestingAgent>(this));
+    registerAgent(std::make_shared<DocCoauthoringAgent>(this));
+    registerAgent(std::make_shared<AlgorithmicArtAgent>(this));
 }
 
 void AgentOrchestrator::registerAgent(std::shared_ptr<SpecializedAgent> agent)
@@ -276,4 +417,3 @@ void AgentOrchestrator::setToolRegistry(ToolRegistry* registry)
 }
 
 } // namespace neurx
-

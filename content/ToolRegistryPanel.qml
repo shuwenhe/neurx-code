@@ -54,6 +54,41 @@ Item {
         root.refreshSelectedToolState()
     }
 
+    function selectToolByName(toolName) {
+        if (!toolName)
+            return false
+        const tool = (root.catalog || []).find(function(candidate) {
+            return candidate && candidate.name === toolName
+        })
+        if (!tool)
+            return false
+        root.selectTool(tool)
+        return true
+    }
+
+    function agentFileWriterExampleArgs() {
+        const workspacePath = agent && agent.workspacePath ? agent.workspacePath : ""
+        const currentPath = agent && agent.currentFilePath ? agent.currentFilePath : ""
+        const targetPath = currentPath
+            || (workspacePath ? "src/new_file.txt" : "new_file.txt")
+
+        return JSON.stringify({
+            operation: "write_single",
+            path: targetPath,
+            content: "// Created with agent_file_writer\n",
+            create_dirs: true,
+            backup: true,
+            validate: true
+        }, null, 2)
+    }
+
+    function openAgentFileWriterQuickStart() {
+        if (!root.selectToolByName("agent_file_writer"))
+            return false
+        root.argumentText = root.agentFileWriterExampleArgs()
+        return true
+    }
+
     function refreshSelectedToolState() {
         if (!root.selectedTool.name) {
             root.selectedToolPermission = ({})
@@ -137,6 +172,14 @@ Item {
                         Button {
                             text: "Refresh"
                             onClicked: root.searchQuery = root.searchQuery
+                        }
+
+                        Button {
+                            text: "Agent File Writer"
+                            enabled: !!root.catalog && root.catalog.length > 0
+                            onClicked: root.openAgentFileWriterQuickStart()
+                            ToolTip.text: "Open agent_file_writer with a ready-to-edit write_single example"
+                            ToolTip.visible: hovered
                         }
                     }
                 }
@@ -588,6 +631,12 @@ Item {
                                         Button {
                                             text: "Reset"
                                             onClicked: argsEditor.text = "{}"
+                                        }
+
+                                        Button {
+                                            text: "Load File Writer Example"
+                                            visible: root.selectedTool.name === "agent_file_writer"
+                                            onClicked: argsEditor.text = root.agentFileWriterExampleArgs()
                                         }
 
                                         Item { Layout.fillWidth: true }

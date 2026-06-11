@@ -39,6 +39,12 @@ ApplicationWindow {
         }
     }
 
+    function openAgentFileWriterTool() {
+        agentTabs.currentIndex = 6
+        if (toolRegistryPanel)
+            toolRegistryPanel.openAgentFileWriterQuickStart()
+    }
+
     readonly property var recentWorkspaces: {
         try {
             return JSON.parse(appSettings.recentWorkspacesJson || "[]")
@@ -413,6 +419,7 @@ ApplicationWindow {
                             }
 
                             ToolRegistryPanel {
+                                id: toolRegistryPanel
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 agent: agentCtx
@@ -615,6 +622,7 @@ ApplicationWindow {
                 { id: "editor.save", title: "File: Save", shortcut: "Ctrl+S", action: () => editorPanel.saveCurrentFile() },
                 { id: "editor.codexWrite", title: "File: Codex Write Current File", action: () => editorPanel.writeCurrentFileWithCodex() },
                 { id: "editor.reload", title: "File: Reload from disk", action: () => editorPanel.syncFromAgent(true) },
+                { id: "tools.agentFileWriter", title: "Tools: Open Agent File Writer", category: "Tools", shortcut: "Ctrl+Shift+W", action: () => openAgentFileWriterTool() },
                 { id: "editor.goto", title: "Go to Line", shortcut: "Ctrl+G", action: () => goToLinePopup.open() },
                 { id: "editor.gotoSymbol", title: "Go to Symbol in Editor...", shortcut: "Ctrl+Shift+O", action: () => goToSymbolPopup.open() },
                 { id: "editor.gotoWorkspaceSymbol", title: "Go to Symbol in Workspace...", shortcut: "Ctrl+T", action: () => goToWorkspaceSymbolPopup.open() },
@@ -824,6 +832,15 @@ ApplicationWindow {
                 ToolTip.text: agentCtx.currentFilePath
                                 ? "Write the current file via Codex CLI"
                                 : "Open a file first"
+                ToolTip.visible: hovered
+            }
+
+            ToolButton {
+                text: "Agent Write"
+                enabled: !!agentCtx.workspacePath
+                font.pixelSize: Theme.fontMd
+                onClicked: openAgentFileWriterTool()
+                ToolTip.text: "Open agent_file_writer with a ready-to-edit file write template"
                 ToolTip.visible: hovered
             }
 

@@ -23,11 +23,21 @@ public:
 private:
     bool ensureDirectoryExists(const QString &dirPath);
     bool writeToFile(const QString &filePath, const QString &content);
-    QString titleCase(const QString &name);
+    QString titleCase(const QString &name) const;
+    QString normalizeDescription(const QString &skillName, const QString &description) const;
+    QString buildSkillMarkdown(const QString &skillName,
+                               const QString &description,
+                               const QString &version,
+                               const QString &category,
+                               const QStringList &platforms,
+                               const QString &author) const;
+    QString buildScriptTemplate(const QString &skillName) const;
+    QString buildReferenceTemplate(const QString &skillTitle) const;
+    QString buildEvalTemplate(const QString &skillName, const QString &skillTitle) const;
+    QString platformListToMarkdown(const QStringList &platforms) const;
 
     ClaudeSkillManager *m_manager;
     QString m_workspaceRoot;
 };
 
 #endif // NEURXSKILLCREATORTOOL_H
-

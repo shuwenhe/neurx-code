@@ -299,6 +299,51 @@ public:
 };
 
 /**
+ * @class WebTestingAgent
+ * @brief Agent for testing web applications using Playwright
+ */
+class WebTestingAgent : public SpecializedAgent {
+    Q_OBJECT
+
+public:
+    explicit WebTestingAgent(QObject* parent = nullptr);
+
+    void executeTask(const AgentTask& task,
+                    std::function<void(const AgentResult&)> callback) override;
+    void cancelTask(const QString& taskId) override;
+};
+
+/**
+ * @class DocCoauthoringAgent
+ * @brief Agent for structured document co-authoring
+ */
+class DocCoauthoringAgent : public SpecializedAgent {
+    Q_OBJECT
+
+public:
+    explicit DocCoauthoringAgent(QObject* parent = nullptr);
+
+    void executeTask(const AgentTask& task,
+                    std::function<void(const AgentResult&)> callback) override;
+    void cancelTask(const QString& taskId) override;
+};
+
+/**
+ * @class AlgorithmicArtAgent
+ * @brief Agent for creating algorithmic art using p5.js
+ */
+class AlgorithmicArtAgent : public SpecializedAgent {
+    Q_OBJECT
+
+public:
+    explicit AlgorithmicArtAgent(QObject* parent = nullptr);
+
+    void executeTask(const AgentTask& task,
+                    std::function<void(const AgentResult&)> callback) override;
+    void cancelTask(const QString& taskId) override;
+};
+
+/**
  * @class AgentOrchestrator
  * @brief Orchestrates multiple specialized agents
  */

@@ -69,6 +69,9 @@
 // Phase 1 Framework Tools (Tool Registry Integrated)
 #include "tools/GitWorkflowTool.h"
 
+// Agent File Writer Tool (File creation and management)
+#include "tools/AgentFileWriterTool.h"
+
 // Phase 1 Framework Components (Non-tool Infrastructure)
 // TODO: HookManager - For lifecycle hook management and interception
 // TODO: SecurityScanner - For code pattern scanning and security validation
@@ -115,6 +118,7 @@ run shell commands (both local and sandboxed Docker), and search the codebase.
 - Edit: Modify files by text replacement (file_path, old_text, new_text) - old_text must match exactly
 - MultiEdit: Apply multiple edits to one file (file_path, edits[]) - batch edits atomically
 - Read: Read file contents (file_path, start_line?, end_line?) - supports line ranges
+- agent_file_writer: Agent-oriented file writing with write_single, write_batch, update_file, write_template, create_structure
 - codex_file_system: Codex-style file operations (write_file, create_file, read_file, create_directory, delete_file, get_metadata, write_batch, exists, list_directory, move, rename, copy, append)
 - file_creation: Atomic file creation and overwrite with validation and checkpoint support
 - incremental_edit: Line-range edits with insert, replace, delete, append, and batch preview
@@ -143,7 +147,7 @@ Agentic Lifecycle:
 1. PERCEIVE: Use 'Read' to examine files, 'Glob' to find files, 'Grep' to search content, or 'knowledge' to index documentation.
 2. REASON & GROUND: Understand the logic. Use 'google_search' for API docs verification.
 3. PLAN: Use 'update_plan' for Codex-style step tracking, or 'todo' to manage the underlying task list directly.
-4. ACTION: Apply changes using 'Write' for new files, 'Edit' for simple replacements, 'MultiEdit' for batch changes, 'apply_patch' for Codex-style contextual edits, or 'patch' for unified diffs. Use 'Bash' or 'run_docker_command' for builds/tests.
+4. ACTION: Apply changes using 'agent_file_writer' or 'Write' for new files, 'Edit' for simple replacements, 'MultiEdit' for batch changes, 'apply_patch' for Codex-style contextual edits, or 'patch' for unified diffs. Use 'Bash' or 'run_docker_command' for builds/tests.
 5. OBSERVE: Read command output, verify changes with 'Read', iterate until complete.
 
 Guidelines:
@@ -722,6 +726,7 @@ static bool isWorkspaceMutatingTool(const QString &toolName)
 {
     return toolName == QStringLiteral("file_system")
         || toolName == QStringLiteral("codex_file_system")
+        || toolName == QStringLiteral("agent_file_writer")
         || toolName == QStringLiteral("file_creation")
         || toolName == QStringLiteral("smart_file_creator")
         || toolName == QStringLiteral("incremental_edit")
@@ -1841,6 +1846,8 @@ static QStringList inferredToolTags(const QString &toolName)
         return {QStringLiteral("files"), QStringLiteral("workspace"), QStringLiteral("io")};
     if (toolName == QStringLiteral("codex_file_system"))
         return {QStringLiteral("files"), QStringLiteral("workspace"), QStringLiteral("codex")};
+    if (toolName == QStringLiteral("agent_file_writer"))
+        return {QStringLiteral("files"), QStringLiteral("workspace"), QStringLiteral("write"), QStringLiteral("agent")};
     if (toolName == QStringLiteral("file_creation"))
         return {QStringLiteral("files"), QStringLiteral("workspace"), QStringLiteral("creation")};
     if (toolName == QStringLiteral("smart_file_creator"))
@@ -1888,6 +1895,7 @@ QString AgentController::approvalRiskLevelForTool(const QString &toolName, const
 
     if (name == QStringLiteral("file_system")
         || name == QStringLiteral("codex_file_system")
+        || name == QStringLiteral("agent_file_writer")
         || name == QStringLiteral("file_creation")
         || name == QStringLiteral("smart_file_creator")
         || name == QStringLiteral("patch")
@@ -1927,7 +1935,8 @@ bool AgentController::toolNeedsApproval(const QString &toolName, const QVariantM
         if (resource.isEmpty())
             resource = arguments.value(QStringLiteral("input")).toString();
     } else if (toolName == QStringLiteral("file_system")
-               || toolName == QStringLiteral("codex_file_system")) {
+               || toolName == QStringLiteral("codex_file_system")
+               || toolName == QStringLiteral("agent_file_writer")) {
         const QString op = arguments.value(QStringLiteral("operation")).toString();
         const QString path = arguments.value(QStringLiteral("path")).toString();
         const QString destination = arguments.value(QStringLiteral("destination")).toString();
@@ -3631,6 +3640,7 @@ void AgentController::configurePolicyManagers()
             fileRule.action = QStringLiteral("prompt");
             fileRule.toolNames = {QStringLiteral("file_system"),
                                   QStringLiteral("codex_file_system"),
+                                  QStringLiteral("agent_file_writer"),
                                   QStringLiteral("file_creation"),
                                   QStringLiteral("patch"),
                                   QStringLiteral("apply_patch"),
@@ -3932,6 +3942,7 @@ void AgentController::setWorkspacePath(const QString &path)
     m_registry->registerTool(new WebFetchTool(m_registry));
     m_registry->registerTool(new CodexTool(path, m_registry));
     m_registry->registerTool(new DelegationTool(m_registry, m_providers.value(m_currentProvider), m_currentModel, m_registry));
+    m_registry->registerTool(new AgentFileWriterTool(path, m_registry));
     auto *checkpointTool = new CheckpointTool(path, m_registry);
     connect(checkpointTool, &CheckpointTool::checkpointRolledBack,
             this, [this]() {

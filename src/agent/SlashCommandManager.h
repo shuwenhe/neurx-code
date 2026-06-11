@@ -193,6 +193,9 @@ private:
     SlashCommandResult cmdContext(const QStringList &args, const QJsonObject &context);
     SlashCommandResult cmdIssueLifecycle(const QStringList &args, const QJsonObject &context);
     SlashCommandResult cmdIssueActivity(const QStringList &args, const QJsonObject &context);
+    SlashCommandResult cmdDocCoauthor(const QStringList &args, const QJsonObject &context);
+    SlashCommandResult cmdArtCreator(const QStringList &args, const QJsonObject &context);
+    SlashCommandResult cmdWebTest(const QStringList &args, const QJsonObject &context);
     
     // ── Helper methods ───────────────────────────────────────────────────────
     QStringList parseCommandLine(const QString &line) const;

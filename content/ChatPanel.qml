@@ -93,12 +93,19 @@ Item {
                 }
 
                 onCountChanged: {
-                    if (root.autoFollowLatest)
-                        root.scrollToBottom()
+                    if (root.autoFollowLatest) {
+                        Qt.callLater(() => {
+                            root.scrollToBottom()
+                        })
+                    }
                 }
                 onContentHeightChanged: {
-                    if (root.autoFollowLatest && (root.busy || root.streamingText.length > 0))
-                        root.scrollToBottom()
+                    // Always scroll to bottom when content changes and autoFollowLatest is true
+                    if (root.autoFollowLatest && !root.autoScrollingList) {
+                        Qt.callLater(() => {
+                            root.scrollToBottom()
+                        })
+                    }
                 }
                 onMovementEnded: {
                     if (root.autoScrollingList)
@@ -855,11 +862,17 @@ Item {
     function scrollToBottom() {
         root.autoScrollingList = true
         Qt.callLater(() => {
-            if (listView)
+            if (listView) {
                 listView.positionViewAtEnd()
+                // Add second scroll to ensure proper positioning after layout
+                Qt.callLater(() => {
+                    if (listView)
+                        listView.positionViewAtEnd()
+                }, 50)
+            }
             Qt.callLater(() => {
                 root.autoScrollingList = false
-            })
+            }, 100)
         })
     }
 

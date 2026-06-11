@@ -516,6 +516,48 @@ void SlashCommandManager::registerBuiltInCommands()
             return cmdIssueActivity(args, ctx);
         });
     }
+
+    // /doc-coauthor command
+    {
+        SlashCommand cmd;
+        cmd.id = "doc-coauthor";
+        cmd.name = "doc-coauthor";
+        cmd.description = "Start a structured document co-authoring workflow";
+        cmd.category = "documentation";
+        cmd.aliases = {"write-doc", "coauthor"};
+
+        registerCommand(cmd, [this](const QStringList &args, const QJsonObject &ctx) {
+            return cmdDocCoauthor(args, ctx);
+        });
+    }
+
+    // /art-creator command
+    {
+        SlashCommand cmd;
+        cmd.id = "art-creator";
+        cmd.name = "art-creator";
+        cmd.description = "Create algorithmic art using p5.js";
+        cmd.category = "creative";
+        cmd.aliases = {"gen-art", "p5-art"};
+
+        registerCommand(cmd, [this](const QStringList &args, const QJsonObject &ctx) {
+            return cmdArtCreator(args, ctx);
+        });
+    }
+
+    // /web-test command
+    {
+        SlashCommand cmd;
+        cmd.id = "web-test";
+        cmd.name = "web-test";
+        cmd.description = "Run web application tests using Playwright";
+        cmd.category = "testing";
+        cmd.aliases = {"playwright-test"};
+
+        registerCommand(cmd, [this](const QStringList &args, const QJsonObject &ctx) {
+            return cmdWebTest(args, ctx);
+        });
+    }
 }
 
 // ── Command History ─────────────────────────────────────────────────────────
@@ -1069,6 +1111,45 @@ SlashCommandResult SlashCommandManager::cmdIssueActivity(const QStringList &args
         );
     }
 
+    return result;
+}
+
+SlashCommandResult SlashCommandManager::cmdDocCoauthor(const QStringList &args,
+                                                      const QJsonObject &context)
+{
+    SlashCommandResult result;
+    result.success = true;
+    result.output = "Initializing doc co-authoring workflow...";
+    result.metadata["command"] = "doc-coauthor";
+    result.metadata["agent"] = "doc-coauthor";
+
+    emit commandStatusUpdated("doc-coauthor", "Preparing for context gathering...");
+    return result;
+}
+
+SlashCommandResult SlashCommandManager::cmdArtCreator(const QStringList &args,
+                                                     const QJsonObject &context)
+{
+    SlashCommandResult result;
+    result.success = true;
+    result.output = "Starting algorithmic art creation...";
+    result.metadata["command"] = "art-creator";
+    result.metadata["agent"] = "art-creator";
+
+    emit commandStatusUpdated("art-creator", "Developing algorithmic philosophy...");
+    return result;
+}
+
+SlashCommandResult SlashCommandManager::cmdWebTest(const QStringList &args,
+                                                  const QJsonObject &context)
+{
+    SlashCommandResult result;
+    result.success = true;
+    result.output = "Starting web application tests...";
+    result.metadata["command"] = "web-test";
+    result.metadata["agent"] = "web-tester";
+
+    emit commandStatusUpdated("web-test", "Initializing Playwright environment...");
     return result;
 }
 
