@@ -37,19 +37,26 @@ public:
     // File operations
     bool exists(const QString& path) const;
     FileInfo getFileInfo(const QString& path) const;
-    
+    FileInfo getMetadata(const QString& path) const;
+    QString canonicalize(const QString& path) const;
+    QString joinPaths(const QString& base, const QString& relative) const;
+    QString parentPath(const QString& path) const;
+
     // File content
     QByteArray readFile(const QString& path);
     bool writeFile(const QString& path, const QByteArray& content);
+    bool writeFileAtomic(const QString& path, const QByteArray& content);
     bool deleteFile(const QString& path);
     bool moveFile(const QString& source, const QString& destination);
     bool copyFile(const QString& source, const QString& destination);
-    
+    bool copyFile(const QString& source, const QString& destination, bool recursive);
+
     // Directory operations
     bool createDirectory(const QString& path);
     QList<FileInfo> listDirectory(const QString& path, bool recursive = false);
     QStringList findFiles(const QString& directory, const QString& pattern);
-    
+    bool removePath(const QString& path, bool recursive = false, bool force = false);
+
     // Encoding
     QString detectEncoding(const QString& path);
     QString readFileAsText(const QString& path, const QString& encoding = "UTF-8");
@@ -57,7 +64,7 @@ public:
                         const QString& encoding = "UTF-8");
     
     // Watching
-    void watchFile(const QString& path);
+    void watchFile(const QString& path, bool recursive = false);
     void unwatchFile(const QString& path);
     bool isWatching(const QString& path) const;
     

@@ -31,6 +31,9 @@ Item {
     property bool autoFollowLatest: true
     property bool messageListHovered: false
     property bool autoScrollingList: false
+    property int scrollRetryCount: 0
+    readonly property int maxScrollRetries: 3
+    property int lastManualScrollTime: 0
     readonly property var filteredSlashCommands: (function() {
         const q = root.slashQuery.trim().toLowerCase()
         const recent = Array.from(root.recentSlashCommands).map(cmd => ({ "label": cmd, "hint": "recent" }))
@@ -110,7 +113,24 @@ Item {
                 onMovementEnded: {
                     if (root.autoScrollingList)
                         return
-                    root.autoFollowLatest = root.isListViewAtBottom()
+                    
+                    // 记录用户手动滚动的时间
+                    root.lastManualScrollTime = Date.now()
+                    
+                    // 改进的底部检测
+                    const isAtBottom = root.isListViewAtBottom()
+                    root.autoFollowLatest = isAtBottom
+                }
+
+                onContentYChanged: {
+                    // 当用户往上滚动时（往旧消息方向），禁用自动跟随
+                    if (!root.autoScrollingList && listView.moving) {
+                        // 如果有可滚动的内容且用户滚动到非底部位置
+                        if (listView.contentHeight > listView.height && 
+                            (listView.contentY + listView.height + 48) < listView.contentHeight) {
+                            root.autoFollowLatest = false
+                        }
+                    }
                 }
 
                 delegate: Item {
@@ -861,26 +881,48 @@ Item {
 
     function scrollToBottom() {
         root.autoScrollingList = true
-        Qt.callLater(() => {
-            if (listView) {
-                listView.positionViewAtEnd()
-                // Add second scroll to ensure proper positioning after layout
-                Qt.callLater(() => {
-                    if (listView)
-                        listView.positionViewAtEnd()
-                }, 50)
-            }
-            Qt.callLater(() => {
+        root.scrollRetryCount = 0
+        
+        function performScroll() {
+            if (!listView) {
                 root.autoScrollingList = false
-            }, 100)
-        })
+                return
+            }
+            
+            // 强制布局更新以确保所有消息气泡已渲染
+            if (typeof listView.forceLayout === 'function') {
+                listView.forceLayout()
+            }
+            
+            // 滚动到列表末尾
+            listView.positionViewAtEnd()
+            
+            root.scrollRetryCount++
+            
+            // 如果还没有达到最大重试次数，计划下一次滚动
+            if (root.scrollRetryCount < root.maxScrollRetries) {
+                // 使用递增的延迟: 50ms, 100ms, 150ms
+                const delayMs = 50 * root.scrollRetryCount
+                Qt.callLater(() => {
+                    performScroll()
+                }, delayMs)
+            } else {
+                // 完成所有重试后，恢复自动滚动标志
+                Qt.callLater(() => {
+                    root.autoScrollingList = false
+                }, 100)
+            }
+        }
+        
+        Qt.callLater(performScroll)
     }
 
     function isListViewAtBottom() {
         if (!listView)
             return true
 
-        const threshold = 24
+        // 增加阈值到 48px 以考虑 MessageBubble 的底部 margin 和滚动条宽度
+        const threshold = 48
         return listView.contentHeight <= listView.height
             || (listView.contentY + listView.height + threshold) >= listView.contentHeight
     }

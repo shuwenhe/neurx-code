@@ -302,6 +302,7 @@ Item {
                             toolStatus: modelData.status ?? "pending"
                             toolArgs: modelData.args ?? ""
                             toolResult: modelData.result ?? ""
+                            toolCodeChange: modelData.codeChange ?? {}
                         }
                     }
                 }

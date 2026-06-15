@@ -25,6 +25,7 @@ Item {
             return timelineGroup(item.kind) === root.timelineFilter
         })
     }
+    readonly property var displayedTimeline: collapseCodeChangeTimeline(root.filteredTimeline.slice(-8))
     implicitHeight: panel.implicitHeight
     visible: true
 
@@ -36,6 +37,12 @@ Item {
             return "messages";
         case "approval":
             return "approvals";
+        case "code_change_chain":
+        case "code_change_track":
+        case "code_change_validate":
+        case "code_change_review":
+        case "code_change_approval":
+            return "files";
         case "tool_output":
             return "output";
         case "command_execution":
@@ -69,6 +76,16 @@ Item {
             return "✎";
         case "approval":
             return "✓";
+        case "code_change_chain":
+            return "⟡";
+        case "code_change_track":
+            return "⊕";
+        case "code_change_validate":
+            return "✔";
+        case "code_change_review":
+            return "☑";
+        case "code_change_approval":
+            return "★";
         case "tool_output":
             return "≋";
         case "search":
@@ -102,6 +119,16 @@ Item {
             return "System";
         case "approval":
             return "Approval";
+        case "code_change_chain":
+            return "Code Change";
+        case "code_change_track":
+            return "Track";
+        case "code_change_validate":
+            return "Validate";
+        case "code_change_review":
+            return "Review";
+        case "code_change_approval":
+            return "Approve";
         case "tool_output":
             return "Output";
         case "command_execution":
@@ -119,6 +146,145 @@ Item {
         default:
             return kind || "Event";
         }
+    }
+
+    function codeChangeStepLabel(kind) {
+        switch (kind) {
+        case "code_change_track":
+            return "Track";
+        case "code_change_validate":
+            return "Validate";
+        case "code_change_review":
+            return "Review";
+        case "code_change_approval":
+            return "Approve";
+        case "tool_execution":
+            return "Apply";
+        default:
+            return timelineKindLabel(kind);
+        }
+    }
+
+    function codeChangeStepIcon(kind, status) {
+        if (status === "error")
+            return "✕";
+        if (status === "running")
+            return "●";
+        switch (kind) {
+        case "code_change_track":
+            return "⊕";
+        case "code_change_validate":
+            return "✔";
+        case "code_change_review":
+            return "☑";
+        case "code_change_approval":
+            return "★";
+        case "tool_execution":
+            return "↺";
+        default:
+            return "•";
+        }
+    }
+
+    function codeChangeChainText(steps) {
+        if (!steps || steps.length === 0)
+            return "Track → Validate → Review → Approve → Apply";
+        return steps.map(function(step) {
+            return step.label || timelineKindLabel(step.kind);
+        }).join(" → ");
+    }
+
+    function codeChangeStepVariant(step) {
+        if (!step)
+            return "idle"
+        if (step.status === "error")
+            return "error"
+        if (step.status === "running")
+            return "current"
+        if (step.separatorAfter !== true)
+            return "terminal"
+        return "done"
+    }
+
+    function codeChangeStepEndIcon(step) {
+        if (!step)
+            return "•"
+        if (step.status === "error")
+            return "✕"
+        if (step.status === "running")
+            return "●"
+        return "✓"
+    }
+
+    function isCodeChangeKind(kind) {
+        return kind === "code_change_track"
+            || kind === "code_change_validate"
+            || kind === "code_change_review"
+            || kind === "code_change_approval"
+            || kind === "tool_execution";
+    }
+
+    function collapseCodeChangeTimeline(items) {
+        const source = items || []
+        const result = []
+        let i = 0
+        while (i < source.length) {
+            const item = source[i]
+            if (item && item.kind === "code_change_track") {
+                const group = {
+                    kind: "code_change_chain",
+                    title: item.title || "Code change pipeline",
+                    status: item.status || "done",
+                    toolName: item.toolName || "",
+                    callId: item.callId || "",
+                    timestamp: item.timestamp || "",
+                    details: item.details || "",
+                    steps: []
+                }
+                let applyStep = null
+                let j = i
+                while (j < source.length) {
+                    const candidate = source[j]
+                    if (!candidate || candidate.callId !== group.callId || !isCodeChangeKind(candidate.kind))
+                        break
+                    if (candidate.kind === "tool_execution") {
+                        applyStep = {
+                            kind: candidate.kind,
+                            label: codeChangeStepLabel(candidate.kind),
+                            icon: codeChangeStepIcon(candidate.kind, candidate.status),
+                            status: candidate.status || "done",
+                            title: candidate.title || "",
+                            details: candidate.details || "",
+                            timestamp: candidate.timestamp || ""
+                        }
+                    } else {
+                        group.steps.push({
+                            kind: candidate.kind,
+                            label: codeChangeStepLabel(candidate.kind),
+                            icon: codeChangeStepIcon(candidate.kind, candidate.status),
+                            status: candidate.status || "done",
+                            title: candidate.title || "",
+                            details: candidate.details || "",
+                            timestamp: candidate.timestamp || ""
+                        })
+                    }
+                    group.status = candidate.status || group.status
+                    group.details = candidate.details || group.details
+                    j += 1
+                }
+                if (applyStep !== null)
+                    group.steps.push(applyStep)
+                for (let k = 0; k < group.steps.length; ++k)
+                    group.steps[k].separatorAfter = k < group.steps.length - 1
+                result.push(group)
+                i = j
+                continue
+            }
+
+            result.push(item)
+            i += 1
+        }
+        return result
     }
 
     Rectangle {
@@ -323,7 +489,7 @@ Item {
                     }
 
                     Repeater {
-                        model: root.filteredTimeline.slice(-8)
+                        model: root.displayedTimeline
 
                         delegate: Rectangle {
                             required property var modelData
@@ -351,7 +517,159 @@ Item {
                                     Layout.fillWidth: true
                                     spacing: 2
 
+                                    ColumnLayout {
+                                        visible: modelData.kind === "code_change_chain"
+                                        Layout.fillWidth: true
+                                        spacing: 4
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: modelData.title || "Code change pipeline"
+                                            color: Theme.textPrimary
+                                            font.pixelSize: Theme.fontXs
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: codeChangeChainText(modelData.steps || [])
+                                            color: Theme.textMuted
+                                            font.pixelSize: Theme.fontXs
+                                            elide: Text.ElideRight
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 0
+
+                                            Repeater {
+                                                model: modelData.steps || []
+
+                                                delegate: RowLayout {
+                                                    required property var modelData
+                                                    spacing: 0
+
+                                                    Rectangle {
+                                                        property bool isCurrentStep: codeChangeStepVariant(modelData) === "current"
+                                                        property bool isTerminalStep: codeChangeStepVariant(modelData) === "terminal"
+                                                        property real pulse: 0.0
+                                                        radius: 10
+                                                        border.color: isCurrentStep || isTerminalStep ? Theme.accent : Theme.border
+                                                        border.width: isCurrentStep || isTerminalStep ? 2 : 1
+                                                        implicitHeight: 20
+                                                        implicitWidth: stepContent.implicitWidth + (isTerminalStep ? 24 : 18)
+                                                        color: codeChangeStepVariant(modelData)
+                                                            === "error" ? Theme.error
+                                                            : codeChangeStepVariant(modelData)
+                                                            === "current" ? Theme.accent
+                                                            : codeChangeStepVariant(modelData)
+                                                            === "terminal" ? Theme.surface
+                                                            : Theme.surfaceAlt
+                                                        opacity: isCurrentStep || isTerminalStep ? 1.0 : 0.95
+                                                        scale: isCurrentStep || isTerminalStep ? 1.02 : 1.0
+
+                                                        SequentialAnimation on pulse {
+                                                            running: isCurrentStep
+                                                            loops: Animation.Infinite
+                                                            NumberAnimation {
+                                                                to: 1.0
+                                                                duration: 900
+                                                                easing.type: Easing.InOutSine
+                                                            }
+                                                            NumberAnimation {
+                                                                to: 0.0
+                                                                duration: 900
+                                                                easing.type: Easing.InOutSine
+                                                            }
+                                                        }
+
+                                                        Rectangle {
+                                                            visible: parent.isCurrentStep || parent.isTerminalStep
+                                                            anchors.left: parent.left
+                                                            anchors.right: parent.right
+                                                            anchors.top: parent.top
+                                                            height: 2
+                                                            radius: 10
+                                                            color: parent.isTerminalStep ? Theme.accent : "white"
+                                                            opacity: parent.isTerminalStep ? 0.45 : 0.25
+                                                        }
+
+                                                        Rectangle {
+                                                            visible: parent.isCurrentStep || parent.isTerminalStep
+                                                            anchors.fill: parent
+                                                            radius: parent.radius
+                                                            color: "transparent"
+                                                            border.color: Theme.accent
+                                                            border.width: 1
+                                                            opacity: parent.isTerminalStep ? 0.22 : 0.12 + (parent.pulse * 0.16)
+                                                        }
+
+                                                        Row {
+                                                            id: stepContent
+                                                            anchors.centerIn: parent
+                                                            spacing: 4
+
+                                                            Label {
+                                                                text: modelData.icon || "•"
+                                                                color: codeChangeStepVariant(modelData) === "current"
+                                                                    || codeChangeStepVariant(modelData) === "terminal"
+                                                                    || codeChangeStepVariant(modelData) === "error" ? "white"
+                                                                    : Theme.textPrimary
+                                                                font.pixelSize: Theme.fontXs
+                                                                font.bold: true
+                                                            }
+
+                                                            Label {
+                                                                id: stepLabel
+                                                                text: modelData.label || ""
+                                                                color: codeChangeStepVariant(modelData) === "current"
+                                                                    || codeChangeStepVariant(modelData) === "terminal"
+                                                                    || codeChangeStepVariant(modelData) === "error" ? "white"
+                                                                    : Theme.textPrimary
+                                                                font.pixelSize: Theme.fontXs
+                                                                font.bold: true
+                                                            }
+                                                        }
+                                                    }
+
+                                                    Rectangle {
+                                                        visible: modelData.separatorAfter === true
+                                                        Layout.preferredWidth: 12
+                                                        Layout.preferredHeight: 1
+                                                        color: Theme.border
+                                                        opacity: 0.85
+                                                    }
+
+                                                    Rectangle {
+                                                        visible: modelData.separatorAfter !== true
+                                                        Layout.preferredWidth: 24
+                                                        Layout.preferredHeight: 20
+                                                        radius: 10
+                                                        color: modelData.status === "error" ? Theme.error
+                                                            : modelData.status === "running" ? Theme.warning
+                                                            : Theme.surface
+                                                        border.color: modelData.status === "error" ? Theme.error
+                                                            : modelData.status === "running" ? Theme.accent
+                                                            : Theme.accent
+                                                        border.width: 1
+
+                                                        Label {
+                                                            anchors.centerIn: parent
+                                                            text: codeChangeStepEndIcon(modelData)
+                                                            color: modelData.status === "error" || modelData.status === "running"
+                                                                ? "white"
+                                                                : Theme.textPrimary
+                                                            font.pixelSize: Theme.fontXs
+                                                            font.bold: true
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     Label {
+                                        visible: modelData.kind !== "code_change_chain"
                                         Layout.fillWidth: true
                                         text: modelData.title || modelData.kind || "event"
                                         color: Theme.textPrimary
@@ -360,6 +678,7 @@ Item {
                                     }
 
                                     Label {
+                                        visible: modelData.kind !== "code_change_chain"
                                         Layout.fillWidth: true
                                         text: timelineKindLabel(modelData.kind)
                                             + ((modelData.toolName || "").length > 0 ? " · " + modelData.toolName : "")

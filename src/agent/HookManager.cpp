@@ -4,6 +4,9 @@
 #include <QJsonDocument>
 #include <QTextStream>
 #include <QDir>
+#include <QFileSystemWatcher>
+#include <QFileInfo>
+#include <QRegularExpression>
 
 // ── 构造和析构 ──────────────────────────────────────────────────────────────
 
@@ -11,6 +14,8 @@ HookManager::HookManager(QObject *parent)
     : QObject(parent)
 {
     qInfo() << "[HookManager] Initialized";
+    // 初始化内置安全规则
+    setupDefaultSecurityRules();
 }
 
 HookManager::~HookManager()
@@ -62,7 +67,8 @@ void HookManager::setHookEnabled(const QString& name, bool enabled)
 
 QList<HookManager::HookConfig> HookManager::allHooks() const
 {
-    return m_hooks.values();
+    QList<HookConfig> values = m_hooks.values();
+    return values;
 }
 
 QList<HookManager::HookConfig> HookManager::hooksForType(HookType type) const
@@ -275,7 +281,7 @@ bool HookManager::shouldContinueSession(const QJsonObject& context)
     return false;
 }
 
-// ── 辅助方法 ────────────────────────────────────────────────────────────────
+// ── 辅助方法 ────────────��───────────────────────────────────────────────────
 
 QString HookManager::expandVariables(const QString& text, const QJsonObject& context)
 {
@@ -288,8 +294,16 @@ QString HookManager::expandVariables(const QString& text, const QJsonObject& con
     // 展开 context 中的变量
     for (const QString& key : context.keys()) {
         QString placeholder = QString("${%1}").arg(key);
-        QString value = context.value(key).toVariant().toString();
-        result.replace(placeholder, value);
+        QJsonValue val = context.value(key);
+        if (val.isObject()) {
+            // 展开嵌套对象（如 tool_input.path）
+            QJsonObject obj = val.toObject();
+            for (const QString& subKey : obj.keys()) {
+                QString subPlaceholder = QString("${%1.%2}").arg(key, subKey);
+                result.replace(subPlaceholder, obj.value(subKey).toVariant().toString());
+            }
+        }
+        result.replace(placeholder, val.toVariant().toString());
     }
 
     return result;
@@ -304,7 +318,7 @@ QJsonObject HookManager::parseHookOutput(const QString& output)
         return doc.object();
     }
 
-    // 如果不是 JSON，构造一个简单的对象
+    // 如果不�� JSON，构造一个简单的对象
     QJsonObject result;
     result["systemMessage"] = output.trimmed();
     result["blockOperation"] = false;
@@ -346,24 +360,99 @@ HookManager::HookType hookTypeFromString(const QString& str)
     return HookManager::HookType::PreToolUse;
 }
 
+void HookManager::loadHooksFromDirectory(const QString& directoryPath)
+{
+    QDir dir(directoryPath);
+    if (!dir.exists()) {
+        qWarning() << "[HookManager] Directory does not exist:" << directoryPath;
+        return;
+    }
+
+    qInfo() << "[HookManager] Loading hooks from:" << directoryPath;
+
+    QStringList filters;
+    filters << "*.hook.md" << "*.hook.json";
+
+    for (const QFileInfo& fileInfo : dir.entryInfoList(filters, QDir::Files)) {
+        HookConfig config = loadHookFromFile(fileInfo.absoluteFilePath());
+        if (!config.name.isEmpty()) {
+            registerHook(config);
+        }
+    }
+}
+
+void HookManager::watchDirectory(const QString& directoryPath)
+{
+    static QFileSystemWatcher* watcher = nullptr;
+    if (!watcher) {
+        watcher = new QFileSystemWatcher(this);
+        connect(watcher, &QFileSystemWatcher::directoryChanged, this, [this](const QString& path) {
+            qInfo() << "[HookManager] Directory changed, reloading hooks:" << path;
+            loadHooksFromDirectory(path);
+        });
+        connect(watcher, &QFileSystemWatcher::fileChanged, this, [this, directoryPath](const QString& path) {
+            qInfo() << "[HookManager] Hook file changed, reloading directory:" << directoryPath;
+            loadHooksFromDirectory(directoryPath);
+        });
+    }
+
+    if (QDir(directoryPath).exists()) {
+        watcher->addPath(directoryPath);
+        loadHooksFromDirectory(directoryPath);
+    }
+}
+
 HookManager::HookConfig loadHookFromFile(const QString& filePath)
 {
-    // TODO: 实现 Markdown + YAML frontmatter 解析
-    // 格式示例：
-    // ---
-    // name: security-check
-    // type: PreToolUse
-    // mode: command
-    // command: /path/to/script.py
-    // ---
-    // 
-    // Hook 描述（Markdown）
-    
     HookManager::HookConfig config;
-    config.name = QFileInfo(filePath).baseName();
-    
-    qInfo() << "[HookManager] Loading hook from file:" << filePath << "(stub)";
-    
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return config;
+    }
+
+    QTextStream in(&file);
+    QString content = in.readAll();
+
+    if (filePath.endsWith(".json")) {
+        QJsonDocument doc = QJsonDocument::fromJson(content.toUtf8());
+        if (!doc.isNull() && doc.isObject()) {
+            QJsonObject obj = doc.object();
+            config.name = obj.value("name").toString();
+            config.type = hookTypeFromString(obj.value("type").toString());
+            config.mode = obj.value("mode").toString() == "command" ? HookManager::HookMode::CommandBased : HookManager::HookMode::PromptBased;
+            config.enabled = obj.value("enabled").toBool(true);
+            config.command = obj.value("command").toString();
+            config.args = obj.value("args").toVariant().toStringList();
+            config.hookPrompt = obj.value("hookPrompt").toString();
+            config.requiresLLMDecision = obj.value("requiresLLMDecision").toBool(false);
+            config.timeout = obj.value("timeout").toInt(5000);
+        }
+    } else if (filePath.endsWith(".md")) {
+        // 简化的 YAML frontmatter 解析
+        QRegularExpression re("^---\\s*\\n(.*?)\\n---\\s*\\n", QRegularExpression::DotMatchesEverythingOption);
+        QRegularExpressionMatch match = re.match(content);
+        if (match.hasMatch()) {
+            QString yaml = match.captured(1);
+            // 这里为了简单，手动解析几行 YAML
+            for (const QString& line : yaml.split('\n')) {
+                QStringList parts = line.split(':');
+                if (parts.size() >= 2) {
+                    QString key = parts[0].trimmed();
+                    QString value = parts[1].trimmed();
+                    if (key == "name") config.name = value;
+                    else if (key == "type") config.type = hookTypeFromString(value);
+                    else if (key == "mode") config.mode = value == "command" ? HookManager::HookMode::CommandBased : HookManager::HookMode::PromptBased;
+                    else if (key == "command") config.command = value;
+                    else if (key == "enabled") config.enabled = (value == "true");
+                }
+            }
+        }
+    }
+
+    if (config.name.isEmpty()) {
+        config.name = QFileInfo(filePath).baseName();
+    }
+
     return config;
 }
 
@@ -374,4 +463,37 @@ bool saveHookToFile(const QString& filePath, const HookManager::HookConfig& conf
     qInfo() << "[HookManager] Saving hook to file:" << filePath << "(stub)";
     
     return true;
+}
+
+void HookManager::setupDefaultSecurityRules()
+{
+    // 1. 阻止删除根目录或敏感目录
+    HookConfig pathSecurity;
+    pathSecurity.name = "path-protection";
+    pathSecurity.type = HookType::PreToolUse;
+    pathSecurity.mode = HookMode::CommandBased;
+    pathSecurity.command = "sh";
+    pathSecurity.args = QStringList() << "-c" <<
+        "if echo \"$1\" | grep -qE '^(/etc/|/var/|/usr/|/bin/|/sbin/|/$)'; then "
+        "  echo '{\"blockOperation\": true, \"systemMessage\": \"Access to system path blocked for security.\"}'; "
+        "else "
+        "  echo '{\"blockOperation\": false}'; "
+        "fi" << "--";
+    // 注意：这里需要传递工具输入中的路径，我们在 executeCommandHook 中会展开 ${tool_input.path} 等
+    // 简化起见，这里先注册，具体逻辑可以通过脚本更精细实现
+    registerHook(pathSecurity);
+
+    // 2. 自动循环 (Ralph Wiggum 模式)
+    // 当 Agent 想要退出但任务未完成时，拦截并提示继续
+    HookConfig autoIterate;
+    autoIterate.name = "ralph-wiggum";
+    autoIterate.type = HookType::Stop;
+    autoIterate.mode = HookMode::PromptBased;
+    autoIterate.hookPrompt =
+        "Evaluate if the task is truly finished. If there are pending steps or "
+        "if the last output suggests more work is needed, return blockOperation: true "
+        "and a system message explaining why we should continue.";
+    autoIterate.requiresLLMDecision = true;
+    autoIterate.enabled = false; // 默认禁用，用户按需开启
+    registerHook(autoIterate);
 }

@@ -13,6 +13,7 @@ Item {
     required property string toolStatus   // "pending" | "running" | "done" | "error"
     required property string toolArgs
     required property string toolResult
+    property var toolCodeChange: ({})
 
     implicitHeight: header.height + (expanded ? body.implicitHeight + 8 : 0)
 
@@ -21,6 +22,19 @@ Item {
     property bool expanded: toolStatus === "error"
     property bool isPatchTool: toolName === "patch"
     property bool hasPatchPreview: isPatchTool && toolResult.indexOf("Patch is applicable.") === 0
+    readonly property bool hasCodeChange: {
+        const value = root.toolCodeChange || {}
+        return Object.keys(value).length > 0
+    }
+    readonly property bool codeChangeApproved: hasCodeChange && !!(root.toolCodeChange.approved ? true : false)
+    readonly property bool codeChangeValid: hasCodeChange && !!(root.toolCodeChange.validation ? root.toolCodeChange.validation.isValid : false)
+    readonly property bool codeChangeReviewed: hasCodeChange && !!(root.toolCodeChange.review ? root.toolCodeChange.review.canMerge : false)
+    readonly property string codeChangeSummary: hasCodeChange
+        ? (root.toolCodeChange.summary
+            || (root.toolCodeChange.review ? root.toolCodeChange.review.summary : "")
+            || (root.toolCodeChange.validation ? root.toolCodeChange.validation.summary : "")
+            || "")
+        : ""
 
     // ── Header ────────────────────────────────────────────────────────────
     Rectangle {
@@ -93,10 +107,103 @@ Item {
         radius: Theme.radius
         clip: true
 
-        ColumnLayout {
-            id: bodyContent
-            anchors { fill: parent; margins: 10 }
-            spacing: 8
+            ColumnLayout {
+                id: bodyContent
+                anchors { fill: parent; margins: 10 }
+                spacing: 8
+
+            Rectangle {
+                Layout.fillWidth: true
+                visible: root.hasCodeChange
+                radius: Theme.radius
+                color: Theme.bg
+                border.color: root.codeChangeApproved ? Theme.success
+                              : root.codeChangeReviewed ? Theme.warning
+                              : Theme.border
+                implicitHeight: codeChangeColumn.implicitHeight + 12
+
+                ColumnLayout {
+                    id: codeChangeColumn
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    spacing: 6
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+
+                        Label {
+                            text: "Code Change"
+                            color: Theme.textPrimary
+                            font.pixelSize: Theme.fontSm
+                            font.bold: true
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Label {
+                            text: root.codeChangeApproved ? "approved"
+                                : root.codeChangeReviewed ? "reviewed"
+                                : root.codeChangeValid ? "validated"
+                                : "tracked"
+                            color: root.codeChangeApproved ? Theme.success
+                                : root.codeChangeReviewed ? Theme.warning
+                                : Theme.textMuted
+                            font.pixelSize: Theme.fontXs
+                            font.bold: true
+                        }
+                    }
+
+                    Row {
+                        spacing: 6
+                        visible: root.toolCodeChange.changeSet !== undefined
+
+                        Rectangle {
+                            radius: 8
+                            color: Theme.surfaceAlt
+                            border.color: Theme.border
+                            height: 20
+                            width: changeSetLabel.implicitWidth + 12
+                            Label {
+                                id: changeSetLabel
+                                anchors.centerIn: parent
+                                text: root.toolCodeChange.changeSet && root.toolCodeChange.changeSet.totalFiles !== undefined
+                                    ? root.toolCodeChange.changeSet.totalFiles + " files"
+                                    : "change set"
+                                color: Theme.textPrimary
+                                font.pixelSize: Theme.fontXs
+                            }
+                        }
+
+                        Rectangle {
+                            radius: 8
+                            color: Theme.surfaceAlt
+                            border.color: Theme.border
+                            height: 20
+                            width: validationLabel.implicitWidth + 12
+                            Label {
+                                id: validationLabel
+                                anchors.centerIn: parent
+                                text: root.toolCodeChange.validation && root.toolCodeChange.validation.summary
+                                    ? root.toolCodeChange.validation.summary
+                                    : "validation"
+                                color: Theme.textPrimary
+                                font.pixelSize: Theme.fontXs
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
+
+                    Label {
+                        visible: root.codeChangeSummary.length > 0
+                        Layout.fillWidth: true
+                        text: root.codeChangeSummary
+                        color: Theme.textMuted
+                        font.pixelSize: Theme.fontXs
+                        wrapMode: Text.WordWrap
+                    }
+                }
+            }
 
             // Args
             Label {

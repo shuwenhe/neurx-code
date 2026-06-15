@@ -12,6 +12,8 @@ struct TaskSessionSnapshot {
     QString threadId;
     QString sessionId;
     QString parentThreadId;
+    QString goal;
+    QString status{QStringLiteral("in_progress")};
     QString workspacePath;
     QString currentProvider;
     QString currentModel;
@@ -19,6 +21,7 @@ struct TaskSessionSnapshot {
     QDateTime updatedAt;
     QVariantList todoItems;
     QVariantList executionTimeline;
+    QVariantList contextItems;
     QVariantMap approvalProfile;
     QList<AgentMessage> messages;
 

@@ -47,6 +47,7 @@ struct AgentMessage {
     QList<ToolCall> toolCalls;             // non-empty when role==Assistant invoking tools
     QList<ToolResult> toolResults;         // non-empty when role==Tool
     QDateTime       timestamp{QDateTime::currentDateTimeUtc()};
+    bool            cacheable{false};       // Hint for LLM prompt caching (Anthropic)
 
     bool hasToolCalls()   const { return !toolCalls.isEmpty(); }
     bool hasToolResults() const { return !toolResults.isEmpty(); }
@@ -86,3 +87,5 @@ Q_DECLARE_METATYPE(TokenEvent)
 Q_DECLARE_METATYPE(AgentMessage)
 Q_DECLARE_METATYPE(QList<ToolCall>)
 Q_DECLARE_METATYPE(QList<ToolResult>)
+
+

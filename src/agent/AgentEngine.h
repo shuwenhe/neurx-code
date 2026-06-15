@@ -12,6 +12,7 @@
 #include "agent/AgentToolRegistry.h"
 #include "llm/LLMProvider.h"
 #include "approvals/ApprovalManager.h"
+#include "security/SecurityScanner.h"
 
 // Agent Runtime Enhancement components (Tier 3)
 class SlashCommandManager;
@@ -20,6 +21,12 @@ class RuleEngine;
 class MCPManager;
 class ContextManager;
 class ExecutionStrategyManager;
+class HookManager;
+class TaskOrchestrator;
+class ErrorRecoveryManager;
+
+// Security components
+class FolderTrustManager;
 
 // ── AgentEngineConfig ────────────────────────────────────────
 
@@ -56,6 +63,12 @@ public:
     void setWorkspaceRoot(const QString &root);
     QString systemPrompt() const { return m_config.systemPrompt; }
     QString workspaceRoot() const { return m_workspaceRoot; }
+    
+    // Folder Trust Discovery
+    bool isFolderTrusted(const QString &folder) const;
+    void markFolderAsTrusted(const QString &folder, const QString &reason = "");
+    void markFolderAsUntrusted(const QString &folder);
+    FolderTrustManager *folderTrustManager() const;
 
     // Agent Runtime Enhancement accessors (Tier 3)
     SlashCommandManager *slashCommandManager() const { return m_slashCommandManager.get(); }
@@ -64,6 +77,10 @@ public:
     MCPManager *mcpManager() const { return m_mcpManager.get(); }
     ContextManager *contextManager() const { return m_contextManager.get(); }
     ExecutionStrategyManager *strategyManager() const { return m_strategyManager.get(); }
+    HookManager *hookManager() const { return m_hookManager.get(); }
+    TaskOrchestrator *taskOrchestrator() const { return m_taskOrchestrator.get(); }
+    ErrorRecoveryManager *recoveryManager() const { return m_recoveryManager.get(); }
+    SecurityScanner *securityScanner() const { return m_securityScanner.get(); }
 
     AgentStatus status()      const { return m_status; }
     QString     activeModel() const { return m_activeModel; }
@@ -138,6 +155,13 @@ private:
     std::unique_ptr<MCPManager> m_mcpManager;
     std::unique_ptr<ContextManager> m_contextManager;
     std::unique_ptr<ExecutionStrategyManager> m_strategyManager;
+    std::unique_ptr<HookManager> m_hookManager;
+    std::unique_ptr<TaskOrchestrator> m_taskOrchestrator;
+    std::unique_ptr<ErrorRecoveryManager> m_recoveryManager;
+    std::unique_ptr<SecurityScanner> m_securityScanner;
+
+    // Security managers
+    FolderTrustManager *m_folderTrustManager{nullptr};
 
     // Pending approval: callId → ToolCall
     QHash<QString, ToolCall> m_pendingApprovals;

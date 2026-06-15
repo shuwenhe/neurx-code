@@ -7,6 +7,7 @@
 #include <QMetaObject>
 #include <QMutexLocker>
 #include <QMutex>
+#include <QJsonArray>
 
 // Agent Runtime Enhancement components (Tier 3)
 #include "agent/SlashCommandManager.h"
@@ -14,8 +15,15 @@
 #include "agent/RuleEngine.h"
 #include "agent/MCPManager.h"
 #include "agent/ContextManager.h"
+#include "agent/TaskOrchestrator.h"
 #include "agent/ExecutionStrategyManager.h"
-#include "security/FolderTrustDiscoveryService.h"
+#include "agent/HookManager.h"
+#include "agent/ErrorRecoveryManager.h"
+#include "security/SecurityScanner.h"
+#include "services/FileSnapshotService.h"
+
+// Security components
+#include "security/FolderTrustManager.h"
 
 static const QString kDefaultSystem = R"(
 You are NeurX Code, an expert software engineering AI assistant.
@@ -38,6 +46,107 @@ static QString logMessagePreview(const QString &text, int maxLen = 120)
     return compact.left(maxLen) + QStringLiteral("...");
 }
 
+static QString askForApprovalToString(AskForApproval value)
+{
+    switch (value) {
+    case AskForApproval::Never:
+        return QStringLiteral("never");
+    case AskForApproval::OnFailure:
+        return QStringLiteral("on-failure");
+    case AskForApproval::OnRequest:
+        return QStringLiteral("on-request");
+    case AskForApproval::Granular:
+        return QStringLiteral("granular");
+    case AskForApproval::UnlessTrusted:
+        return QStringLiteral("unless-trusted");
+    }
+    return QStringLiteral("on-request");
+}
+
+static QString approvalReviewerToString(ApprovalsReviewer reviewer)
+{
+    switch (reviewer) {
+    case ApprovalsReviewer::User:
+        return QStringLiteral("user");
+    case ApprovalsReviewer::AutoReview:
+        return QStringLiteral("auto-review");
+    case ApprovalsReviewer::Guardian:
+        return QStringLiteral("guardian");
+    }
+    return QStringLiteral("user");
+}
+
+static QVariantMap approvalPolicyToVariantMap(const ApprovalPolicy &policy)
+{
+    QVariantMap map;
+    map.insert(QStringLiteral("defaultPolicy"), askForApprovalToString(policy.defaultPolicy));
+    map.insert(QStringLiteral("defaultReviewer"), approvalReviewerToString(policy.defaultReviewer));
+    map.insert(QStringLiteral("requireNetworkApproval"), policy.requireNetworkApproval);
+    map.insert(QStringLiteral("readOnlyMode"), policy.readOnlyMode);
+    map.insert(QStringLiteral("autoApproveOnRetry"), policy.autoApproveOnRetry);
+
+    QVariantList granularRules;
+    for (const auto &rule : policy.granularRules) {
+        granularRules.append(QVariantMap{
+            {QStringLiteral("resourcePattern"), rule.resourcePattern},
+            {QStringLiteral("approval"), askForApprovalToString(rule.approval)},
+            {QStringLiteral("action"), rule.action},
+            {QStringLiteral("toolNames"), rule.toolNames},
+            {QStringLiteral("permanent"), rule.permanent},
+        });
+    }
+    map.insert(QStringLiteral("granularRules"), granularRules);
+
+    QVariantList restrictedProtocols;
+    for (const auto &protocol : policy.restrictedProtocols) {
+        restrictedProtocols.append(static_cast<int>(protocol));
+    }
+    map.insert(QStringLiteral("restrictedProtocols"), restrictedProtocols);
+    map.insert(QStringLiteral("doubleConfirmPatterns"), policy.doubleConfirmPatterns);
+    return map;
+}
+
+static QVariantMap buildApprovalProfile(const ApprovalManager *approvalManager,
+                                        const ExecutionStrategyManager *strategyManager,
+                                        bool autoApproveTools)
+{
+    QVariantMap profile;
+    profile.insert(QStringLiteral("autoApproveTools"), autoApproveTools);
+
+    if (approvalManager) {
+        const ApprovalPolicy policy = approvalManager->getDefaultPolicy();
+        profile.insert(QStringLiteral("approvalPolicy"), approvalPolicyToVariantMap(policy));
+        profile.insert(QStringLiteral("readOnlyMode"), approvalManager->isReadOnlyMode());
+        profile.insert(QStringLiteral("pendingApprovals"), approvalManager->getPendingApprovals().size());
+    }
+
+    if (strategyManager) {
+        profile.insert(QStringLiteral("strategyStatistics"), strategyManager->getStatistics().toVariantMap());
+        profile.insert(QStringLiteral("riskDistribution"), strategyManager->getRiskDistribution().toVariantMap());
+        const ExecutionStrategy defaultStrategy = strategyManager->getStrategy(QStringLiteral("default"));
+        if (!defaultStrategy.id.isEmpty()) {
+            profile.insert(QStringLiteral("defaultStrategy"), QVariantMap{
+                {QStringLiteral("id"), defaultStrategy.id},
+                {QStringLiteral("name"), defaultStrategy.name},
+                {QStringLiteral("description"), defaultStrategy.description},
+                {QStringLiteral("approvalMode"), static_cast<int>(defaultStrategy.approvalMode)},
+                {QStringLiteral("timeoutMs"), defaultStrategy.timeoutMs},
+                {QStringLiteral("highRiskThreshold"), defaultStrategy.highRiskThreshold}
+            });
+        }
+    }
+
+    return profile;
+}
+
+static RiskAssessment assessToolCallRisk(const ToolCall &call, ExecutionStrategyManager *strategyManager)
+{
+    if (!strategyManager) {
+        return {};
+    }
+    return strategyManager->assessToolRisk(call.name.trimmed(), call.arguments);
+}
+
 AgentEngine::AgentEngine(QObject *parent) : QObject(parent)
 {
     m_config.systemPrompt = kDefaultSystem.trimmed();
@@ -49,6 +158,11 @@ AgentEngine::AgentEngine(QObject *parent) : QObject(parent)
     m_mcpManager = std::make_unique<MCPManager>(this);
     m_contextManager = std::make_unique<ContextManager>(this);
     m_strategyManager = std::make_unique<ExecutionStrategyManager>(this);
+    m_hookManager = std::make_unique<HookManager>(this);
+    m_recoveryManager = std::make_unique<ErrorRecoveryManager>(this);
+    m_securityScanner = std::make_unique<SecurityScanner>(this);
+    m_taskOrchestrator = std::make_unique<TaskOrchestrator>(this);
+    m_taskOrchestrator->setContextManager(m_contextManager.get());
 
     // Connect EventBus to important signals
     connect(this, &AgentEngine::toolExecuting, m_eventBus.get(), [this](const ToolCall &call) {
@@ -100,6 +214,10 @@ void AgentEngine::setProvider(LLMProvider *provider)
 {
     if (m_provider) m_provider->disconnect(this);
     m_provider = provider;
+    if (m_taskOrchestrator) {
+        m_taskOrchestrator->setCurrentProvider(m_provider ? m_provider->providerId() : QString(),
+                                               m_activeModel);
+    }
     if (m_provider) {
         // Increase context budget for Gemini
         int budget = m_config.contextWindowTokens;
@@ -148,16 +266,84 @@ void AgentEngine::setAutoApproveTools(bool enabled)
 void AgentEngine::setWorkspaceRoot(const QString &root)
 {
     m_workspaceRoot = root;
+    if (m_taskOrchestrator) {
+        m_taskOrchestrator->setWorkspacePath(root);
+    }
+    m_folderTrustManager = FolderTrustManager::instance();
+    if (m_folderTrustManager) {
+        m_folderTrustManager->disconnect(this);
+    }
+    if (m_folderTrustManager && m_eventBus) {
+        connect(m_folderTrustManager, &FolderTrustManager::trustDecisionRequired,
+                this, [this](const QString &folderPath, const QStringList &items) {
+            m_eventBus->publishCustomEvent(
+                QStringLiteral("FolderTrustDecisionRequired"),
+                QStringLiteral("FolderTrustManager"),
+                QJsonObject{
+                    {QStringLiteral("folder"), folderPath},
+                    {QStringLiteral("items"), QJsonArray::fromStringList(items)}
+                }
+            );
+        });
 
-    // TODO: Perform Folder Trust Discovery when properly integrated
-    // Temporarily disabled to avoid duplicate symbol issues
-    // FolderDiscoveryResults discovery = FolderTrustDiscoveryService::discover(root);
+        connect(m_folderTrustManager, &FolderTrustManager::folderTrustChanged,
+                this, [this](const QString &folderPath, bool trusted) {
+            m_eventBus->publishCustomEvent(
+                QStringLiteral("FolderTrustChanged"),
+                QStringLiteral("FolderTrustManager"),
+                QJsonObject{
+                    {QStringLiteral("folder"), folderPath},
+                    {QStringLiteral("trusted"), trusted}
+                }
+            );
+        });
+    }
+
+    // Perform Folder Trust Discovery
+    if (!m_workspaceRoot.isEmpty() && m_folderTrustManager) {
+        // Check if folder is already trusted
+        if (m_folderTrustManager->isFolderTrusted(root)) {
+            qInfo() << "[AgentEngine] Workspace is trusted:" << root;
+        } else {
+            // Perform discovery to check for suspicious patterns
+            bool isSafe = m_folderTrustManager->performTrustDiscovery(root);
+            if (!isSafe) {
+                qWarning() << "[AgentEngine] Suspicious content detected in workspace:" << root;
+                // Emit signal to prompt user for trust decision
+                QStringList suspiciousItems = m_folderTrustManager->scanForSuspiciousPatterns(root);
+                if (!suspiciousItems.isEmpty()) {
+                    if (m_eventBus) {
+                        m_eventBus->publishEvent(
+                            AgentEvent::Type::ExecutionFailed,
+                            "SuspiciousContentDetected",
+                            QJsonObject{{"folder", root}, {"items", QJsonArray::fromStringList(suspiciousItems)}}
+                        );
+                        m_eventBus->publishCustomEvent(
+                            QStringLiteral("WorkspaceTrustRequired"),
+                            QStringLiteral("AgentEngine"),
+                            QJsonObject{
+                                {QStringLiteral("folder"), root},
+                                {QStringLiteral("items"), QJsonArray::fromStringList(suspiciousItems)}
+                            }
+                        );
+                    }
+                }
+            } else {
+                qInfo() << "[AgentEngine] Workspace passed trust discovery:" << root;
+                // Auto-mark as trusted after successful discovery
+                m_folderTrustManager->markFolderAsTrusted(root, "Auto-trusted after discovery");
+            }
+        }
+    }
 }
 
 void AgentEngine::setActiveModel(const QString &model)
 {
     if (m_activeModel == model) return;
     m_activeModel = model;
+    if (m_taskOrchestrator) {
+        m_taskOrchestrator->setCurrentProvider(m_provider ? m_provider->providerId() : QString(), model);
+    }
     emit activeModelChanged(model);
 }
 
@@ -234,6 +420,13 @@ bool AgentEngine::isDestructiveShellCommand(const QString &command) const
 QString AgentEngine::approvalRiskLevel(const ToolCall &call) const
 {
     const QString toolName = call.name.trimmed();
+    if (m_strategyManager) {
+        const RiskAssessment assessment = assessToolCallRisk(call, m_strategyManager.get());
+        if (!assessment.level.isEmpty()) {
+            return assessment.level;
+        }
+    }
+
     if (toolName == QStringLiteral("run_command") || toolName == QStringLiteral("run_docker_command")) {
         const QString command = shellCommandFromCall(call);
         if (isDestructiveShellCommand(command))
@@ -307,23 +500,39 @@ bool AgentEngine::shouldRequireApproval(const ToolCall &call) const
 {
     const QString toolName = call.name.trimmed();
     const QString resource = approvalResourceForCall(call);
+    bool requireApproval = false;
+    bool explicitAllow = false;
 
     if (m_approvalManager) {
         const AskForApproval policy = m_approvalManager->getPolicyFor(toolName, resource);
-        if (policy == AskForApproval::Never)
-            return false;
-        if (!m_config.autoApproveTools)
-            return true;
+        if (policy == AskForApproval::Never) {
+            explicitAllow = true;
+        }
         if (policy == AskForApproval::OnRequest
             || policy == AskForApproval::Granular
-            || policy == AskForApproval::UnlessTrusted)
-            return true;
-        if (policy == AskForApproval::OnFailure)
-            return false;
+            || policy == AskForApproval::UnlessTrusted) {
+            requireApproval = true;
+        }
     }
+
+    if (!requireApproval && m_strategyManager) {
+        const ExecutionStrategy strategy = (toolName == QStringLiteral("run_command")
+                                            || toolName == QStringLiteral("run_docker_command"))
+            ? m_strategyManager->getStrategyForCommand(shellCommandFromCall(call))
+            : m_strategyManager->getStrategyForTool(toolName);
+        const RiskAssessment risk = assessToolCallRisk(call, m_strategyManager.get());
+        requireApproval = m_strategyManager->needsApproval(risk, strategy);
+    }
+
+    if (requireApproval)
+        return true;
+
+    if (explicitAllow)
+        return false;
 
     if (!m_config.autoApproveTools)
         return true;
+
     const QString risk = approvalRiskLevel(call);
     return risk == QStringLiteral("high") || risk == QStringLiteral("critical");
 }
@@ -342,15 +551,20 @@ void AgentEngine::injectContext(const QString &filePath, const QString &content,
         item.content = content;
         item.transient = true;
         item.priority = 55;
+        item.cacheable = true; // Injecting a file is a good breakpoint for caching
         item.metadata["display"] = ctx;
         if (startLine > 0) item.metadata["startLine"] = startLine;
         if (endLine > 0) item.metadata["endLine"] = endLine;
         m_contextManager->addContextItem(item);
     }
+    if (m_taskOrchestrator) {
+        m_taskOrchestrator->recordContextSnapshot(QStringLiteral("injectContext"));
+    }
 
     AgentMessage msg;
     msg.role    = MessageRole::User;
     msg.content = ctx;
+    msg.cacheable = true; // Mark context injection as cacheable
     appendMessage(msg);
 }
 
@@ -360,6 +574,16 @@ void AgentEngine::submitUserMessage(const QString &text, const QVariantList &att
 
     // Check for slash commands (Tier 3 enhancement)
     if (text.startsWith('/') && m_slashCommandManager) {
+        if (m_taskOrchestrator && m_taskOrchestrator->currentThreadId().isEmpty()) {
+            TaskOrchestrator::StartOptions options;
+            options.workspacePath = m_workspaceRoot;
+            options.currentProvider = m_provider ? m_provider->providerId() : QString();
+            options.currentModel = m_activeModel;
+            options.contextItems = m_contextManager ? m_contextManager->exportContextItems() : QVariantList{};
+            options.approvalProfile = buildApprovalProfile(m_approvalManager, m_strategyManager.get(), m_config.autoApproveTools);
+            m_taskOrchestrator->startTask(text, options);
+        }
+
         QJsonObject slashContext;
         slashContext["workspaceRoot"] = m_workspaceRoot;
         slashContext["activeModel"] = m_activeModel;
@@ -373,10 +597,17 @@ void AgentEngine::submitUserMessage(const QString &text, const QVariantList &att
 
         SlashCommandResult result = m_slashCommandManager->executeCommand(text, slashContext);
         if (result.success) {
+            if (m_taskOrchestrator) {
+                m_taskOrchestrator->recordUserMessage(text, attachments);
+            }
+
             AgentMessage cmdResponse;
             cmdResponse.role = MessageRole::Assistant;
             cmdResponse.content = result.output;
             appendMessage(cmdResponse);
+            if (m_taskOrchestrator) {
+                m_taskOrchestrator->recordAssistantMessage(cmdResponse);
+            }
 
             // If the command specified an agent, we might want to switch or delegate
             if (result.metadata.contains("agent")) {
@@ -393,6 +624,21 @@ void AgentEngine::submitUserMessage(const QString &text, const QVariantList &att
     userMsg.role    = MessageRole::User;
     userMsg.content = text;
     userMsg.attachments = attachments;
+
+    if (m_taskOrchestrator && m_taskOrchestrator->currentThreadId().isEmpty()) {
+        TaskOrchestrator::StartOptions options;
+        options.workspacePath = m_workspaceRoot;
+        options.currentProvider = m_provider ? m_provider->providerId() : QString();
+        options.currentModel = m_activeModel;
+        options.contextItems = m_contextManager ? m_contextManager->exportContextItems() : QVariantList{};
+        options.approvalProfile = buildApprovalProfile(m_approvalManager, m_strategyManager.get(), m_config.autoApproveTools);
+        m_taskOrchestrator->startTask(text, options);
+    }
+
+    if (m_taskOrchestrator) {
+        m_taskOrchestrator->recordUserMessage(text, attachments);
+    }
+
     appendMessage(userMsg);
 
     m_interrupted = false;
@@ -414,6 +660,9 @@ void AgentEngine::approveTool(const QString &callId, bool approved)
         AgentMessage resultMsg;
         resultMsg.role = MessageRole::Tool;
         resultMsg.toolResults.append(denied);
+        if (m_taskOrchestrator) {
+            m_taskOrchestrator->recordToolResult(denied);
+        }
         locker.unlock();
         appendMessage(resultMsg);
         return;
@@ -426,6 +675,17 @@ void AgentEngine::approveTool(const QString &callId, bool approved)
 void AgentEngine::runLoop()
 {
     int iterations = 0;
+
+    // Session Start Hooks
+    if (m_hookManager) {
+        QString hookPrompt = m_hookManager->getSessionStartPrompt();
+        if (!hookPrompt.isEmpty()) {
+            AgentMessage msg;
+            msg.role = MessageRole::System;
+            msg.content = "System Instructions from Hooks:\n" + hookPrompt;
+            appendMessage(msg);
+        }
+    }
 
     while (iterations++ < m_config.maxIterations && !m_interrupted) {
         if (!m_provider) {
@@ -510,6 +770,9 @@ void AgentEngine::runLoop()
                           << "toolCalls=" << response.message.toolCalls.size();
 
         appendMessage(response.message);
+        if (m_taskOrchestrator) {
+            m_taskOrchestrator->recordAssistantMessage(response.message);
+        }
 
         // ── No tool calls → turn is complete ─────────────────────────────────
         if (m_verifier.turnComplete(response.message)) {
@@ -524,7 +787,69 @@ void AgentEngine::runLoop()
         for (const auto &call : response.message.toolCalls) {
             if (m_interrupted) break;
 
+            // Capture state before potentially destructive operations
+            QString checkpointId;
+            if (m_recoveryManager && (call.name.contains("write") || call.name.contains("patch") || call.name.contains("delete"))) {
+                QStringList targetFiles;
+                if (call.arguments.contains("path")) targetFiles << call.arguments["path"].toString();
+                if (call.arguments.contains("file_path")) targetFiles << call.arguments["file_path"].toString();
+
+                if (!targetFiles.isEmpty()) {
+                    QString snapshotId = FileSnapshotService::instance()->takeSnapshot(targetFiles);
+                    checkpointId = m_recoveryManager->createCheckpoint(call.id, QString("Pre-tool: %1").arg(call.name));
+                    QJsonObject state;
+                    state["fileSnapshotId"] = snapshotId;
+                    m_recoveryManager->saveCheckpoint(checkpointId, state);
+                    qInfo() << "[AgentEngine] Created recovery checkpoint:" << checkpointId << "for tool:" << call.name;
+                }
+            }
+
+            // Hook: PreToolUse
+            if (m_hookManager && !m_hookManager->shouldAllowToolUse(call.name, call.arguments)) {
+                qWarning() << "[AgentEngine] Tool execution blocked by hook:" << call.name;
+                ToolResult blockedResult{call.id, call.name, true, "Execution blocked by security policy (Hook)."};
+                if (m_taskOrchestrator) {
+                    m_taskOrchestrator->recordToolCall(call, QStringLiteral("blocked_by_hook"));
+                    m_taskOrchestrator->recordToolResult(blockedResult);
+                }
+                resultsMsg.toolResults.append(blockedResult);
+                emit toolFinished(blockedResult);
+                continue;
+            }
+
+            // 🛡️ Security Check: Pattern scanning for file modifications
+            if (m_securityScanner && (call.name == "patch" || call.name == "apply_patch" || call.name == "write_file" || call.name.contains("edit"))) {
+                QString contentToCheck;
+                if (call.arguments.contains("content")) contentToCheck = call.arguments["content"].toString();
+                else if (call.arguments.contains("patch")) contentToCheck = call.arguments["patch"].toString();
+                else if (call.arguments.contains("text")) contentToCheck = call.arguments["text"].toString();
+
+                if (!contentToCheck.isEmpty()) {
+                    auto issues = m_securityScanner->scanContent(contentToCheck, call.arguments["path"].toString());
+                    if (!issues.isEmpty()) {
+                        QString warning = "⚠️ Security Warning: Dangerous patterns detected in your suggested change:\n";
+                        for (const auto& issue : issues) {
+                            warning += QString("- [%1] %2 (%3)\n").arg(severityToString(issue.severity), issue.message, issue.pattern);
+                        }
+                        warning += "\nPlease revise the code to follow security best practices.";
+
+                        qWarning() << "[AgentEngine] Security issues found in tool call:" << call.name;
+
+                        ToolResult securityResult{call.id, call.name, true, warning};
+                        if (m_taskOrchestrator) {
+                            m_taskOrchestrator->recordToolResult(securityResult);
+                        }
+                        resultsMsg.toolResults.append(securityResult);
+                        emit toolFinished(securityResult);
+                        continue;
+                    }
+                }
+            }
+
             if (shouldRequireApproval(call)) {
+                if (m_taskOrchestrator) {
+                    m_taskOrchestrator->recordToolCall(call, QStringLiteral("approval_required"));
+                }
                 {
                     QMutexLocker locker(&m_mutex);
                     m_pendingApprovals[call.id] = call;
@@ -542,6 +867,9 @@ void AgentEngine::runLoop()
                 if (m_interrupted) break;
             }
 
+            if (m_taskOrchestrator) {
+                m_taskOrchestrator->recordToolCall(call, QStringLiteral("started"));
+            }
             emit toolExecuting(call);
             // Forward streaming chunks from the tool to our own signal so the
             // main-thread UI can update the tool card live.
@@ -552,17 +880,89 @@ void AgentEngine::runLoop()
                                      Qt::DirectConnection);
             const ToolResult result = m_executor.execute(call);
             if (streamConn) disconnect(streamConn);
+
+            // If tool failed, consider automatic recovery
+            if (result.isError && m_recoveryManager && !checkpointId.isEmpty()) {
+                qWarning() << "[AgentEngine] Tool failed, checking recovery for:" << call.name;
+                // For now, we don't auto-rollback unless it's a critical strategy,
+                // but we make the checkpoint available.
+            }
+
             qInfo().noquote() << "[agent] tool result:"
                               << call.name
                               << "callId=" << call.id
                               << "error=" << (result.isError ? "true" : "false");
+            if (m_taskOrchestrator) {
+                m_taskOrchestrator->recordToolResult(result);
+            }
             emit toolFinished(result);
             resultsMsg.toolResults.append(result);
+
+            // Hook: PostToolUse
+            if (m_hookManager) {
+                QJsonObject postContext;
+                postContext["tool"] = call.name;
+                postContext["isError"] = result.isError;
+                postContext["content"] = result.content;
+                m_hookManager->executeHooks(HookManager::HookType::PostToolUse, postContext);
+            }
         }
 
         appendMessage(resultsMsg);
+
+        // Hook: Stop (Autonomous iteration)
+        if (m_hookManager && iterations < m_config.maxIterations) {
+            QJsonObject stopContext;
+            stopContext["iterations"] = iterations;
+            stopContext["last_message"] = response.message.content;
+
+            if (m_hookManager->shouldContinueSession(stopContext)) {
+                qInfo() << "[AgentEngine] Hook requested to continue session (Ralph Wiggum mode)";
+                continue; // Force another iteration
+            }
+        }
     }
 
     setStatus(AgentStatus::Idle);
     emit turnComplete();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Folder Trust Discovery Implementation
+// ────────────────────────────────────────────────────────────────────────────
+
+bool AgentEngine::isFolderTrusted(const QString &folder) const
+{
+    if (!m_folderTrustManager) {
+        return false;
+    }
+    return m_folderTrustManager->isFolderTrusted(folder);
+}
+
+void AgentEngine::markFolderAsTrusted(const QString &folder, const QString &reason)
+{
+    if (!m_folderTrustManager) {
+        m_folderTrustManager = FolderTrustManager::instance();
+    }
+    m_folderTrustManager->markFolderAsTrusted(folder, reason);
+    qInfo() << "[AgentEngine] Folder marked as trusted:" << folder << "(" << reason << ")";
+}
+
+void AgentEngine::markFolderAsUntrusted(const QString &folder)
+{
+    if (!m_folderTrustManager) {
+        m_folderTrustManager = FolderTrustManager::instance();
+    }
+    m_folderTrustManager->markFolderAsUntrusted(folder);
+    qWarning() << "[AgentEngine] Folder marked as untrusted:" << folder;
+}
+
+FolderTrustManager *AgentEngine::folderTrustManager() const
+{
+    // Return the singleton instance if available
+    if (m_folderTrustManager) {
+        return m_folderTrustManager;
+    }
+    // Return the singleton instance directly
+    return FolderTrustManager::instance();
 }

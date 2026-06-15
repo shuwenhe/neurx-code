@@ -51,6 +51,8 @@ QJsonObject snapshotToJson(const TaskSessionSnapshot &snapshot)
     obj["threadId"] = threadId;
     obj["sessionId"] = snapshot.sessionId;
     obj["parentThreadId"] = snapshot.parentThreadId;
+    obj["goal"] = snapshot.goal;
+    obj["status"] = snapshot.status;
     obj["workspacePath"] = snapshot.workspacePath;
     obj["currentProvider"] = snapshot.currentProvider;
     obj["currentModel"] = snapshot.currentModel;
@@ -60,6 +62,7 @@ QJsonObject snapshotToJson(const TaskSessionSnapshot &snapshot)
         : QString{};
     obj["todoItems"] = variantListToJsonArray(snapshot.todoItems);
     obj["executionTimeline"] = variantListToJsonArray(snapshot.executionTimeline);
+    obj["contextItems"] = variantListToJsonArray(snapshot.contextItems);
     obj["approvalProfile"] = QJsonValue::fromVariant(snapshot.approvalProfile);
 
     QJsonArray messagesJson;
@@ -79,6 +82,8 @@ TaskSessionSnapshot snapshotFromJson(const QJsonObject &obj)
     if (snapshot.sessionId.trimmed().isEmpty())
         snapshot.sessionId = snapshot.threadId;
     snapshot.parentThreadId = obj.value("parentThreadId").toString();
+    snapshot.goal = obj.value("goal").toString();
+    snapshot.status = obj.value("status").toString(QStringLiteral("in_progress"));
     snapshot.workspacePath = obj.value("workspacePath").toString();
     snapshot.currentProvider = obj.value("currentProvider").toString();
     snapshot.currentModel = obj.value("currentModel").toString();
@@ -86,6 +91,7 @@ TaskSessionSnapshot snapshotFromJson(const QJsonObject &obj)
     snapshot.updatedAt = QDateTime::fromString(obj.value("updatedAt").toString(), Qt::ISODateWithMs);
     snapshot.todoItems = jsonArrayToVariantList(obj.value("todoItems").toArray());
     snapshot.executionTimeline = jsonArrayToVariantList(obj.value("executionTimeline").toArray());
+    snapshot.contextItems = jsonArrayToVariantList(obj.value("contextItems").toArray());
     snapshot.approvalProfile = obj.value("approvalProfile").toObject().toVariantMap();
 
     for (const auto &value : obj.value("messages").toArray()) {
@@ -151,8 +157,11 @@ QList<QVariantMap> TaskSessionStore::listSessions()
         item["currentProvider"] = snapshot.currentProvider;
         item["currentModel"] = snapshot.currentModel;
         item["currentFilePath"] = snapshot.currentFilePath;
+        item["goal"] = snapshot.goal;
+        item["status"] = snapshot.status;
         item["messageCount"] = snapshot.messages.size();
         item["eventCount"] = snapshot.executionTimeline.size();
+        item["contextItemCount"] = snapshot.contextItems.size();
         item["updatedAt"] = snapshot.updatedAt.isValid()
             ? snapshot.updatedAt.toLocalTime().toString(Qt::ISODate)
             : info.lastModified().toLocalTime().toString(Qt::ISODate);

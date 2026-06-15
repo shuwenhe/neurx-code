@@ -1,6 +1,10 @@
 #include "SpecializedAgents.h"
 #include <QDebug>
 #include <QDateTime>
+#include <QtConcurrent>
+#include <QSemaphore>
+#include <QFuture>
+#include <QFutureWatcher>
 
 namespace neurx {
 
@@ -362,21 +366,73 @@ void AgentOrchestrator::executeTask(const AgentTask& task,
 }
 
 void AgentOrchestrator::executeParallel(const QList<AgentTask>& tasks,
-                                       std::function<void(const QList<AgentResult>&)> callback)
+                        std::function<void(const QList<AgentResult>&)> callback)
 {
-    // Simplified parallel execution
-    auto results = std::make_shared<QList<AgentResult>>();
-    auto counter = std::make_shared<int>(tasks.size());
+    // Improved parallel execution using QtConcurrent with per-task synchronization.
+    // For each task we call executeTask(agent, callback) and block inside a worker
+    // thread until the agent's callback is invoked or the task's timeout elapses.
 
-    for (const auto& task : tasks) {
-        executeTask(task, [results, counter, tasks, callback](const AgentResult& result) {
-            results->append(result);
-            (*counter)--;
-            if (*counter == 0) {
-                callback(*results);
+    QVector<QFuture<AgentResult>> futures;
+    futures.reserve(tasks.size());
+
+    for (const auto &task : tasks) {
+        // Capture by value for thread-safety
+        AgentTask t = task;
+
+        QFuture<AgentResult> f = QtConcurrent::run([this, t]() -> AgentResult {
+            AgentResult result;
+            QSemaphore sem(0);
+
+            // Use the agent if present
+            auto agent = getAgent(t.agentId);
+            if (!agent) {
+                result.success = false;
+                result.taskId = t.taskId;
+                result.agentId = t.agentId;
+                result.error = "Agent not found: " + t.agentId;
+                return result;
             }
+
+            // Call executeTask and wait for the callback to be invoked.
+            // The agent implementation is expected to invoke the callback when done.
+            agent->executeTask(t, [&result, &sem](const AgentResult &r) {
+                result = r;
+                sem.release(1);
+            });
+
+            // Wait for callback or timeout
+            int waitMs = t.timeoutMs > 0 ? t.timeoutMs : 300000; // default 5min
+            bool acquired = sem.tryAcquire(1, waitMs);
+            if (!acquired) {
+                // Timeout: attempt to cancel the agent task if the agent supports it
+                try {
+                    if (agent) {
+                        agent->cancelTask(t.taskId);
+                    }
+                } catch (...) {
+                    // swallow exceptions; agent cancel may be no-op
+                }
+
+                result.success = false;
+                result.taskId = t.taskId;
+                result.agentId = t.agentId;
+                result.error = QString("Agent task timed out after %1 ms").arg(waitMs);
+            }
+
+            return result;
         });
+
+        futures.append(f);
     }
+
+    // Wait for all futures to finish and collect results.
+    QList<AgentResult> results;
+    for (auto &f : futures) {
+        f.waitForFinished();
+        results.append(f.result());
+    }
+
+    if (callback) callback(results);
 }
 
 void AgentOrchestrator::executeSequential(const QList<AgentTask>& tasks,

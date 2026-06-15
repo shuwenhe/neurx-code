@@ -168,7 +168,7 @@ ToolResult PatchTool::previewDiff(const QString &callId, const QJsonObject &args
     tmp.flush();
 
     QString output;
-    if (!runGitApply({"--check", "--verbose"}, tmp.fileName(), output)) {
+    if (!runGitApply({"apply", "--check", "--verbose"}, tmp.fileName(), output)) {
         return {callId, name(), true, output.isEmpty() ? "Patch preview failed." : output};
     }
     return {callId, name(), false,

@@ -144,9 +144,6 @@ bool DefaultSandboxManager::canAccess(const QString &path, FileSystemAccessMode 
 {
     QMutexLocker locker(&m_mutex);
 
-    if (mode == FileSystemAccessMode::Write)
-        return true;
-
     // Check protected metadata first
     for (const auto &metaPath : m_protectedMetadataPaths) {
         if (path.contains(metaPath)) {
@@ -169,6 +166,18 @@ bool DefaultSandboxManager::canAccess(const QString &path, FileSystemAccessMode 
                           m_fsPolicy.allowedReadPaths.end(),
                           [&](const QString &p) { return path.startsWith(p); });
     } else if (mode == FileSystemAccessMode::Write) {
+        if (m_readOnlyMode || m_defaultMode == SandboxMode::ReadOnly) {
+            return false;
+        }
+
+        if (m_defaultMode == SandboxMode::DangerFullAccess && m_fsPolicy.allowedWritePaths.isEmpty()) {
+            return true;
+        }
+
+        if (m_fsPolicy.allowedWritePaths.isEmpty()) {
+            return m_defaultMode == SandboxMode::DangerFullAccess;
+        }
+
         // Can write only if explicitly allowed
         return std::any_of(m_fsPolicy.allowedWritePaths.begin(),
                           m_fsPolicy.allowedWritePaths.end(),

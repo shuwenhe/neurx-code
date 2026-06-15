@@ -1,4 +1,5 @@
 #include "agent/ErrorRecoveryManager.h"
+#include "services/FileSnapshotService.h"
 #include <QUuid>
 #include <QDateTime>
 
@@ -32,8 +33,17 @@ bool ErrorRecoveryManager::rollback(const QString &checkpointId)
         return false;
     }
 
-    // In a real implementation, would restore state
-    // emit stateRestored(checkpointId);
+    // Capture the snapshot ID from state if it exists
+    QString snapshotId = it.value().state.value("fileSnapshotId").toString();
+    if (!snapshotId.isEmpty()) {
+        if (FileSnapshotService::instance()->restoreSnapshot(snapshotId)) {
+            qInfo() << "[ErrorRecoveryManager] Successfully rolled back files for checkpoint:" << checkpointId;
+        } else {
+            qWarning() << "[ErrorRecoveryManager] Snapshot restoration failed for checkpoint:" << checkpointId;
+        }
+    }
+
+    emit recoveryAttempted(checkpointId);
     return true;
 }
 
@@ -60,6 +70,15 @@ QJsonObject ErrorRecoveryManager::getCheckpointState(const QString &checkpointId
 bool ErrorRecoveryManager::deleteCheckpoint(const QString &checkpointId)
 {
     return m_checkpoints.remove(checkpointId) > 0;
+}
+
+QList<ErrorRecoveryManager::Checkpoint> ErrorRecoveryManager::getAllCheckpoints() const
+{
+    QList<Checkpoint> list = m_checkpoints.values();
+    std::sort(list.begin(), list.end(), [](const Checkpoint &a, const Checkpoint &b) {
+        return a.createdAt > b.createdAt; // Newest first
+    });
+    return list;
 }
 
 QString ErrorRecoveryManager::recordError(const QString &taskId, ErrorType type, const QString &message,

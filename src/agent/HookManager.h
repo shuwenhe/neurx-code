@@ -128,6 +128,16 @@ public:
      */
     HookResult executeHook(const HookConfig& hook, const QJsonObject& context);
 
+    /**
+     * @brief Load hooks from a directory (hot-loadable)
+     */
+    void loadHooksFromDirectory(const QString& directoryPath);
+
+    /**
+     * @brief Watch a directory for changes and reload hooks automatically
+     */
+    void watchDirectory(const QString& directoryPath);
+
     // ── 便捷方法 ────────────────────────────────────────────────────────────
     
     /**
@@ -172,6 +182,8 @@ private:
     // ── 数据成员 ────────────────────────────────────────────────────────────
     QHash<QString, HookConfig> m_hooks;           ///< 已注册的 hooks
     QHash<HookType, QStringList> m_hooksByType;  ///< 按类型索引的 hooks
+
+    void setupDefaultSecurityRules();
 };
 
 // ── 辅助函数 ────────────────────────────────────────────────────────────────

@@ -3,6 +3,8 @@
 #include <QUuid>
 #include <QDateTime>
 #include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonValue>
 
 ContextManager::ContextManager(QObject *parent)
     : QObject(parent)
@@ -14,7 +16,7 @@ ContextManager::~ContextManager() = default;
 // ── Context Addition ────────────────────────────────────────────────────
 
 QString ContextManager::addFileContext(const QString &filePath, int startLine, int endLine,
-                                      bool transient)
+                                      bool transient, bool cacheable)
 {
     ContextItem item;
     item.id = generateItemId();
@@ -23,6 +25,7 @@ QString ContextManager::addFileContext(const QString &filePath, int startLine, i
     item.content = filePath;
     item.timestamp = QDateTime::currentDateTime();
     item.transient = transient;
+    item.cacheable = cacheable;
     item.priority = 50;  // Default priority
     
     if (startLine >= 0 || endLine >= 0) {
@@ -34,7 +37,7 @@ QString ContextManager::addFileContext(const QString &filePath, int startLine, i
 }
 
 QString ContextManager::addSelectionContext(const QString &content, const QString &source,
-                                           bool transient)
+                                           bool transient, bool cacheable)
 {
     ContextItem item;
     item.id = generateItemId();
@@ -43,6 +46,7 @@ QString ContextManager::addSelectionContext(const QString &content, const QStrin
     item.content = content;
     item.timestamp = QDateTime::currentDateTime();
     item.transient = transient;
+    item.cacheable = cacheable;
     item.priority = 60;  // Higher priority than files
     
     return addContextItem(item);
@@ -127,7 +131,10 @@ QJsonArray ContextManager::getContextAsJSON() const
         obj["content"] = item.content;
         obj["priority"] = item.priority;
         obj["timestamp"] = item.timestamp.toString(Qt::ISODate);
-        
+        if (item.cacheable) {
+            obj["cacheable"] = true;
+        }
+
         if (!item.metadata.isEmpty()) {
             obj["metadata"] = item.metadata;
         }
@@ -151,6 +158,47 @@ QString ContextManager::getContextAsText() const
     }
     
     return text;
+}
+
+QVariantList ContextManager::exportContextItems() const
+{
+    return getContextAsJSON().toVariantList();
+}
+
+bool ContextManager::importContextItems(const QVariantList &items, bool clearExisting)
+{
+    if (clearExisting) {
+        clearAllContext();
+    }
+
+    for (const auto &itemValue : items) {
+        const QJsonObject obj = QJsonValue::fromVariant(itemValue).toObject();
+        if (obj.isEmpty()) {
+            continue;
+        }
+
+        ContextItem item;
+        item.id = obj.value("id").toString();
+        item.type = obj.value("type").toString();
+        item.source = obj.value("source").toString();
+        item.content = obj.value("content").toString();
+        item.metadata = obj.value("metadata").toObject();
+        item.timestamp = QDateTime::fromString(obj.value("timestamp").toString(), Qt::ISODate);
+        item.transient = obj.value("transient").toBool(false);
+        item.cacheable = obj.value("cacheable").toBool(false);
+        item.priority = obj.value("priority").toInt(0);
+
+        if (item.id.isEmpty()) {
+            item.id = generateItemId();
+        }
+        if (!item.timestamp.isValid()) {
+            item.timestamp = QDateTime::currentDateTime();
+        }
+
+        m_contextItems[item.id] = item;
+    }
+
+    return true;
 }
 
 // ── Context Manipulation ────────────────────────────────────────────────
@@ -285,7 +333,7 @@ void ContextManager::clearSnapshots()
     m_snapshots.clear();
 }
 
-// ── Context Analysis ────────────────────────────────────────────────────
+// ── Context Analysis ──────────────��─────────────────────────────────────
 
 QJsonObject ContextManager::getStatistics() const
 {

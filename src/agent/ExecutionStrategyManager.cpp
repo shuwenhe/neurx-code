@@ -4,6 +4,34 @@
 #include <QJsonArray>
 #include <QUuid>
 
+namespace {
+
+QString riskLevelForScore(int score)
+{
+    if (score < 30) {
+        return QStringLiteral("low");
+    }
+    if (score < 60) {
+        return QStringLiteral("medium");
+    }
+    if (score < 85) {
+        return QStringLiteral("high");
+    }
+    return QStringLiteral("critical");
+}
+
+bool containsAny(const QString &text, const QStringList &patterns)
+{
+    for (const auto &pattern : patterns) {
+        if (text.contains(pattern, Qt::CaseInsensitive)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 ExecutionStrategyManager::ExecutionStrategyManager(QObject *parent)
     : QObject(parent)
 {
@@ -72,30 +100,53 @@ RiskAssessment ExecutionStrategyManager::assessToolRisk(const QString &toolName,
                                                        const QJsonObject &parameters)
 {
     RiskAssessment assessment = assessBasicToolRisk(toolName);
+    assessment.details["toolName"] = toolName;
     
     // Add parameter-based risk
     int paramRisk = assessParameterRisk(parameters);
     assessment.score += paramRisk / 2;
-    
+    assessment.details["parameterRisk"] = paramRisk;
+
     // Check for destructive patterns
     if (hasDestructivePattern(toolName, parameters)) {
         assessment.score += 30;
         assessment.factors.append("Destructive operation detected");
+        assessment.details["destructivePattern"] = true;
+    } else {
+        assessment.details["destructivePattern"] = false;
     }
-    
+
+    const QString commandText = parameters.value(QStringLiteral("command")).toString().trimmed().isEmpty()
+        ? parameters.value(QStringLiteral("commandLine")).toString().trimmed()
+        : parameters.value(QStringLiteral("command")).toString().trimmed();
+    if (!commandText.isEmpty()) {
+        assessment.details["command"] = commandText;
+    }
+
+    if ((toolName.contains(QStringLiteral("run_command"), Qt::CaseInsensitive)
+         || toolName.contains(QStringLiteral("shell"), Qt::CaseInsensitive)
+         || toolName.contains(QStringLiteral("exec"), Qt::CaseInsensitive))
+        && containsAny(commandText, {
+               QStringLiteral("rm -rf"),
+               QStringLiteral("git reset --hard"),
+               QStringLiteral("git clean -fd"),
+               QStringLiteral("chmod -R 777"),
+               QStringLiteral("chown -R"),
+               QStringLiteral("sudo "),
+               QStringLiteral("mkfs"),
+               QStringLiteral("shutdown"),
+               QStringLiteral("reboot"),
+               QStringLiteral("powershell"),
+               QStringLiteral("remove-item -recurse")
+           })) {
+        assessment.score += 35;
+        assessment.factors.append("Potentially destructive shell command");
+        assessment.details["shellCommandRisk"] = true;
+    }
+
     // Clamp score to 0-100
     assessment.score = qMax(0, qMin(100, assessment.score));
-    
-    // Determine risk level
-    if (assessment.score < 30) {
-        assessment.level = "low";
-    } else if (assessment.score < 60) {
-        assessment.level = "medium";
-    } else if (assessment.score < 85) {
-        assessment.level = "high";
-    } else {
-        assessment.level = "critical";
-    }
+    assessment.level = riskLevelForScore(assessment.score);
     
     emit riskAssessed(toolName, assessment);
     m_riskHistory[toolName] = assessment.score;
@@ -136,16 +187,7 @@ RiskAssessment ExecutionStrategyManager::assessCommandRisk(const QString &comman
     
     // Clamp and determine level
     assessment.score = qMax(0, qMin(100, assessment.score));
-    
-    if (assessment.score < 30) {
-        assessment.level = "low";
-    } else if (assessment.score < 60) {
-        assessment.level = "medium";
-    } else if (assessment.score < 85) {
-        assessment.level = "high";
-    } else {
-        assessment.level = "critical";
-    }
+    assessment.level = riskLevelForScore(assessment.score);
     
     return assessment;
 }
@@ -401,23 +443,37 @@ RiskAssessment ExecutionStrategyManager::assessBasicToolRisk(const QString &tool
     assessment.score = 20;  // Base risk
     
     // Known dangerous tools
-    if (toolName == "shell_tool" || toolName.contains("exec")) {
+    if (toolName == QStringLiteral("run_command")
+        || toolName == QStringLiteral("run_docker_command")
+        || toolName == QStringLiteral("shell_tool")
+        || toolName.contains(QStringLiteral("exec"), Qt::CaseInsensitive)
+        || toolName.contains(QStringLiteral("shell"), Qt::CaseInsensitive)) {
         assessment.score = 60;
         assessment.factors.append("Shell execution tool");
-    } else if (toolName.contains("delete") || toolName.contains("remove")) {
-        assessment.score = 50;
-        assessment.factors.append("File deletion tool");
-    } else if (toolName.contains("write") || toolName.contains("modify")) {
+    } else if (toolName == QStringLiteral("patch")
+               || toolName == QStringLiteral("apply_patch")
+               || toolName.contains(QStringLiteral("edit"), Qt::CaseInsensitive)
+               || toolName.contains(QStringLiteral("write"), Qt::CaseInsensitive)
+               || toolName.contains(QStringLiteral("modify"), Qt::CaseInsensitive)
+               || toolName.contains(QStringLiteral("file"), Qt::CaseInsensitive)) {
         assessment.score = 40;
         assessment.factors.append("File modification tool");
-    } else if (toolName.contains("read")) {
+    } else if (toolName.contains(QStringLiteral("delete"), Qt::CaseInsensitive)
+               || toolName.contains(QStringLiteral("remove"), Qt::CaseInsensitive)) {
+        assessment.score = 50;
+        assessment.factors.append("File deletion tool");
+    } else if (toolName.contains(QStringLiteral("read"), Qt::CaseInsensitive)) {
         assessment.score = 10;
         assessment.factors.append("Read-only operation");
+    } else if (toolName == QStringLiteral("web_search")
+               || toolName == QStringLiteral("web_fetch")
+               || toolName.contains(QStringLiteral("network"), Qt::CaseInsensitive)
+               || toolName.contains(QStringLiteral("http"), Qt::CaseInsensitive)) {
+        assessment.score = 30;
+        assessment.factors.append("Network operation");
     }
     
-    assessment.level = assessment.score < 30 ? "low" : 
-                      assessment.score < 60 ? "medium" :
-                      assessment.score < 85 ? "high" : "critical";
+    assessment.level = riskLevelForScore(assessment.score);
     
     return assessment;
 }

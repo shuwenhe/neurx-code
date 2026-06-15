@@ -31,6 +31,21 @@ Popup {
     property string diffFileName: ""
     property string diffOriginalText: ""
     property string diffModifiedText: ""
+    property var codeChange: ({})
+
+    readonly property bool hasCodeChange: {
+        const value = root.codeChange || {}
+        return Object.keys(value).length > 0
+    }
+    readonly property bool codeChangeApproved: hasCodeChange && !!(root.codeChange.approved ? true : false)
+    readonly property bool codeChangeValid: hasCodeChange && !!(root.codeChange.validation ? root.codeChange.validation.isValid : false)
+    readonly property bool codeChangeReviewed: hasCodeChange && !!(root.codeChange.review ? root.codeChange.review.canMerge : false)
+    readonly property string codeChangeSummary: hasCodeChange
+        ? (root.codeChange.summary
+            || (root.codeChange.review ? root.codeChange.review.summary : "")
+            || (root.codeChange.validation ? root.codeChange.validation.summary : "")
+            || "")
+        : ""
 
     function show(callId, name, summary, riskLevel, reason) {
         pendingCallId = callId
@@ -47,6 +62,7 @@ Popup {
         diffFileName = preview && preview.previewFile ? preview.previewFile : ""
         diffOriginalText = preview && preview.originalText ? preview.originalText : ""
         diffModifiedText = preview && preview.modifiedText ? preview.modifiedText : ""
+        codeChange = preview && preview.codeChange ? preview.codeChange : {}
         open()
     }
 
@@ -124,6 +140,101 @@ Popup {
                     color: Theme.textMuted
                     font.pixelSize: Theme.fontXs
                     wrapMode: Text.Wrap
+                }
+
+                Rectangle {
+                    width: parent.width
+                    visible: root.hasCodeChange
+                    radius: Theme.radius
+                    color: Theme.bg
+                    border.color: root.codeChangeApproved ? Theme.success
+                                  : root.codeChangeReviewed ? Theme.warning
+                                  : Theme.border
+                    implicitHeight: codeChangeColumn.implicitHeight + 12
+
+                    ColumnLayout {
+                        id: codeChangeColumn
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        spacing: 6
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Label {
+                                text: "Code change"
+                                color: Theme.textPrimary
+                                font.pixelSize: Theme.fontSm
+                                font.bold: true
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Label {
+                                text: root.codeChangeApproved ? "approved"
+                                    : root.codeChangeReviewed ? "reviewed"
+                                    : root.codeChangeValid ? "validated"
+                                    : "tracked"
+                                color: root.codeChangeApproved ? Theme.success
+                                    : root.codeChangeReviewed ? Theme.warning
+                                    : Theme.textMuted
+                                font.pixelSize: Theme.fontXs
+                                font.bold: true
+                            }
+                        }
+
+                        Label {
+                            visible: root.codeChangeSummary.length > 0
+                            Layout.fillWidth: true
+                            text: root.codeChangeSummary
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontXs
+                            wrapMode: Text.Wrap
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Rectangle {
+                                radius: 8
+                                color: Theme.surfaceAlt
+                                border.color: Theme.border
+                                implicitHeight: 20
+                                implicitWidth: fileCountLabel.implicitWidth + 12
+
+                                Label {
+                                    id: fileCountLabel
+                                    anchors.centerIn: parent
+                                    text: root.codeChange.changeSet && root.codeChange.changeSet.totalFiles !== undefined
+                                        ? root.codeChange.changeSet.totalFiles + " files"
+                                        : "change set"
+                                    color: Theme.textPrimary
+                                    font.pixelSize: Theme.fontXs
+                                }
+                            }
+
+                            Rectangle {
+                                radius: 8
+                                color: Theme.surfaceAlt
+                                border.color: Theme.border
+                                implicitHeight: 20
+                                implicitWidth: reviewLabel.implicitWidth + 12
+
+                                Label {
+                                    id: reviewLabel
+                                    anchors.centerIn: parent
+                                    text: root.codeChange.review && root.codeChange.review.summary
+                                        ? root.codeChange.review.summary
+                                        : "review"
+                                    color: Theme.textPrimary
+                                    font.pixelSize: Theme.fontXs
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -35,6 +35,10 @@
 #include "tools/SkillTool.h"
 #include "tools/ClaudeStandardTools.h"
 #include "tools/CodexApplyPatchTool.h"
+#include "agent/CodeChangeTracker.h"
+#include "agent/CodeChangeValidator.h"
+#include "agent/CodeQualityAnalyzer.h"
+#include "agent/CodeReviewOrchestrator.h"
 
 // Phase 2 File Operation Tools
 #include "tools/EditFileTool.h"
@@ -48,6 +52,7 @@
 
 // Phase 3 File Operation Tools
 #include "tools/PatchGeneratorTool.h"
+#include "tools/CodePerceptionTool.h"
 #include "tools/CompilerIntegrationTool.h"
 #include "tools/ConfigGeneratorTool.h"
 
@@ -68,6 +73,7 @@
 
 // Phase 1 Framework Tools (Tool Registry Integrated)
 #include "tools/GitWorkflowTool.h"
+#include "agent/tools/RecoveryTool.h"
 
 // Agent File Writer Tool (File creation and management)
 #include "tools/AgentFileWriterTool.h"
@@ -99,6 +105,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QRegularExpression>
+#include <QCryptographicHash>
 #include <QSet>
 #include <QUuid>
 #include <QDebug>
@@ -119,7 +126,7 @@ run shell commands (both local and sandboxed Docker), and search the codebase.
 - MultiEdit: Apply multiple edits to one file (file_path, edits[]) - batch edits atomically
 - Read: Read file contents (file_path, start_line?, end_line?) - supports line ranges
 - agent_file_writer: Agent-oriented file writing with write_single, write_batch, update_file, write_template, create_structure
-- codex_file_system: Codex-style file operations (write_file, create_file, read_file, create_directory, delete_file, get_metadata, write_batch, exists, list_directory, move, rename, copy, append)
+- codex_file_system: Codex-style file operations (write_file, create_file, read_file, read_range, tail, create_directory, delete_file, get_metadata, stat_file, hash_file, chmod, symlink, touch, truncate, write_batch, exists, list_directory, move, rename, copy, append)
 - file_creation: Atomic file creation and overwrite with validation and checkpoint support
 - incremental_edit: Line-range edits with insert, replace, delete, append, and batch preview
 
@@ -744,6 +751,48 @@ static bool isPatchLikeTool(const QString &toolName)
         || toolName == QStringLiteral("codex_apply_patch");
 }
 
+static bool isTrackedCodeChangeTool(const QString &toolName, const QVariantMap &arguments)
+{
+    if (toolName == QStringLiteral("Write")
+        || toolName == QStringLiteral("Edit")
+        || toolName == QStringLiteral("MultiEdit")) {
+        return true;
+    }
+
+    if (toolName == QStringLiteral("file_system")
+        || toolName == QStringLiteral("codex_file_system")) {
+        const QString operation = arguments.value(QStringLiteral("operation")).toString();
+        return operation == QStringLiteral("write_file")
+            || operation == QStringLiteral("create_file")
+            || operation == QStringLiteral("delete_file")
+            || operation == QStringLiteral("create_directory")
+            || operation == QStringLiteral("write_batch")
+            || operation == QStringLiteral("replace_in_file")
+            || operation == QStringLiteral("apply_patch")
+            || operation == QStringLiteral("move")
+            || operation == QStringLiteral("move_tree")
+            || operation == QStringLiteral("rename")
+            || operation == QStringLiteral("copy")
+            || operation == QStringLiteral("copy_tree")
+            || operation == QStringLiteral("append");
+    }
+
+    if (toolName == QStringLiteral("file_creation")) {
+        const QString operation = arguments.value(QStringLiteral("operation")).toString();
+        return operation == QStringLiteral("create_file")
+            || operation == QStringLiteral("write_file")
+            || operation == QStringLiteral("create_batch");
+    }
+
+    return toolName == QStringLiteral("agent_file_writer")
+        || toolName == QStringLiteral("incremental_edit")
+        || toolName == QStringLiteral("edit_file")
+        || toolName == QStringLiteral("batch_files")
+        || toolName == QStringLiteral("file_sync")
+        || toolName == QStringLiteral("smart_file_creator")
+        || isPatchLikeTool(toolName);
+}
+
 static QString extractPatchTextFromArguments(const QString &toolName, const QVariantMap &arguments)
 {
     if (!isPatchLikeTool(toolName))
@@ -783,6 +832,615 @@ static QStringList extractTouchedPathsFromPatchText(const QString &patchText)
             touchedPaths.append(rawPath);
     }
     return touchedPaths;
+}
+
+static QString variantMapString(const QVariantMap &map, const QStringList &keys)
+{
+    for (const QString &key : keys) {
+        const QString value = map.value(key).toString();
+        if (!value.trimmed().isEmpty())
+            return value;
+    }
+    return {};
+}
+
+static QString readTextFileIfExists(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return {};
+    return QString::fromUtf8(file.readAll());
+}
+
+static int countLinesInText(const QString &text)
+{
+    if (text.isEmpty())
+        return 0;
+    return text.count(QLatin1Char('\n')) + 1;
+}
+
+static QString applyLiteralReplacement(QString content, const QString &needle, const QString &replacement, bool caseSensitive, int *replacements = nullptr)
+{
+    int count = 0;
+    if (needle.isEmpty())
+        return content;
+
+    const Qt::CaseSensitivity cs = caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
+    int index = 0;
+    while ((index = content.indexOf(needle, index, cs)) != -1) {
+        content.replace(index, needle.size(), replacement);
+        index += replacement.size();
+        ++count;
+    }
+    if (replacements)
+        *replacements = count;
+    return content;
+}
+
+static QString applyEditFilePreview(const QVariantMap &arguments)
+{
+    const QString path = arguments.value(QStringLiteral("path")).toString();
+    const QString search = arguments.value(QStringLiteral("search")).toString();
+    const QString replace = arguments.value(QStringLiteral("replace")).toString();
+    const bool regex = arguments.value(QStringLiteral("regex")).toBool();
+    const bool caseSensitive = arguments.value(QStringLiteral("case_sensitive")).toBool();
+
+    QString content = readTextFileIfExists(path);
+    if (content.isEmpty())
+        return arguments.value(QStringLiteral("line_content")).toString();
+
+    if (regex) {
+        QRegularExpression::PatternOptions options = QRegularExpression::UseUnicodePropertiesOption;
+        if (!caseSensitive)
+            options |= QRegularExpression::CaseInsensitiveOption;
+        const QRegularExpression rx(search, options);
+        if (rx.isValid())
+            content.replace(rx, replace);
+        return content;
+    }
+
+    int replacementCount = 0;
+    return applyLiteralReplacement(content, search, replace, caseSensitive, &replacementCount);
+}
+
+static QString applyIncrementalEditPreview(const QVariantMap &arguments)
+{
+    const QString operation = arguments.value(QStringLiteral("operation")).toString();
+    const QString path = arguments.value(QStringLiteral("file")).toString();
+    QString content = readTextFileIfExists(path);
+    const QString editContent = arguments.value(QStringLiteral("content")).toString();
+    const int startLine = arguments.value(QStringLiteral("start_line")).toInt();
+    const int endLine = arguments.value(QStringLiteral("end_line")).toInt() > 0
+        ? arguments.value(QStringLiteral("end_line")).toInt()
+        : startLine;
+
+    if (operation == QStringLiteral("append")) {
+        content += editContent;
+        return content;
+    }
+
+    QStringList lines = content.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    const QStringList insertLines = editContent.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    if (operation == QStringLiteral("insert")) {
+        const int insertAt = qBound(0, startLine - 1, lines.size());
+        for (int i = 0; i < insertLines.size(); ++i)
+            lines.insert(insertAt + i, insertLines.at(i));
+    } else if (operation == QStringLiteral("replace")) {
+        const int begin = qMax(1, startLine) - 1;
+        const int finish = qMin(endLine, lines.size()) - 1;
+        if (begin <= finish) {
+            lines.erase(lines.begin() + begin, lines.begin() + finish + 1);
+            for (int i = 0; i < insertLines.size(); ++i)
+                lines.insert(begin + i, insertLines.at(i));
+        }
+    } else if (operation == QStringLiteral("delete")) {
+        const int begin = qMax(1, startLine) - 1;
+        const int finish = qMin(endLine, lines.size()) - 1;
+        if (begin <= finish)
+            lines.erase(lines.begin() + begin, lines.begin() + finish + 1);
+    }
+
+    return lines.join(QLatin1Char('\n'));
+}
+
+static QString applyAgentWriterPreview(const QVariantMap &arguments)
+{
+    const QString operation = arguments.value(QStringLiteral("operation")).toString();
+    const QString path = arguments.value(QStringLiteral("path")).toString();
+    QString content = readTextFileIfExists(path);
+
+    if (operation == QStringLiteral("write_single")
+        || operation == QStringLiteral("write_template")) {
+        return arguments.value(QStringLiteral("content")).toString();
+    }
+    if (operation == QStringLiteral("update_file")) {
+        const QString mode = arguments.value(QStringLiteral("mode")).toString();
+        const QString updateContent = arguments.value(QStringLiteral("content")).toString();
+        if (mode == QStringLiteral("prepend"))
+            return updateContent + content;
+        if (mode == QStringLiteral("insert")) {
+            const int line = arguments.value(QStringLiteral("line")).toInt();
+            QStringList lines = content.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+            const QStringList insertLines = updateContent.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+            const int at = qBound(0, line - 1, lines.size());
+            for (int i = 0; i < insertLines.size(); ++i)
+                lines.insert(at + i, insertLines.at(i));
+            return lines.join(QLatin1Char('\n'));
+        }
+        if (mode == QStringLiteral("overwrite"))
+            return updateContent;
+        return content + updateContent;
+    }
+    if (operation == QStringLiteral("write_batch")) {
+        const QVariantList files = arguments.value(QStringLiteral("files")).toList();
+        if (files.isEmpty())
+            return content;
+        QString joined;
+        for (const QVariant &fileValue : files) {
+            const QVariantMap file = fileValue.toMap();
+            joined += file.value(QStringLiteral("content")).toString();
+            joined += QLatin1Char('\n');
+        }
+        return joined;
+    }
+    return content;
+}
+
+struct CodeChangePipelinePlan {
+    ChangeSet changeSet;
+    ValidationResult validation;
+    CodeQualityReport quality;
+    CodeReviewResult review;
+    bool valid{false};
+    bool approved{false};
+    QString summary;
+};
+
+static FileChange buildFileChangeFromContent(const QString &workspacePath,
+                                             const QString &path,
+                                             const QString &originalContent,
+                                             const QString &modifiedContent,
+                                             ChangeType changeType,
+                                             const QString &reason)
+{
+    FileChange change;
+    change.filePath = path;
+    change.originalContent = originalContent;
+    change.modifiedContent = modifiedContent;
+    change.changeType = changeType;
+    change.status = ChangeStatus::Unstaged;
+    change.changedAt = QDateTime::currentDateTimeUtc();
+    change.stageReason = reason;
+    change.fileSize = modifiedContent.toUtf8().size();
+
+    const QStringList beforeLines = originalContent.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    const QStringList afterLines = modifiedContent.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    const int maxLines = qMax(beforeLines.size(), afterLines.size());
+    for (int i = 0; i < maxLines; ++i) {
+        const bool hasBefore = i < beforeLines.size();
+        const bool hasAfter = i < afterLines.size();
+        if (hasBefore && hasAfter) {
+            if (beforeLines.at(i) != afterLines.at(i)) {
+                ++change.totalModifications;
+                change.lineChanges.append(LineChange{i + 1, beforeLines.at(i), afterLines.at(i), ChangeType::Modified, QDateTime::currentDateTimeUtc()});
+            }
+        } else if (hasAfter) {
+            ++change.totalAdditions;
+            change.lineChanges.append(LineChange{i + 1, QString{}, afterLines.at(i), ChangeType::Created, QDateTime::currentDateTimeUtc()});
+        } else {
+            ++change.totalDeletions;
+            change.lineChanges.append(LineChange{i + 1, beforeLines.at(i), QString{}, ChangeType::Deleted, QDateTime::currentDateTimeUtc()});
+        }
+    }
+    change.changeComplexity = qMin(1.0f, float(change.totalAdditions + change.totalDeletions + change.totalModifications) / 50.0f);
+    change.fileHash = QString::fromLatin1(QCryptographicHash::hash(modifiedContent.toUtf8(), QCryptographicHash::Sha1).toHex());
+    Q_UNUSED(workspacePath);
+    return change;
+}
+
+static QVector<FileChange> buildPlannedFileChanges(const QString &toolName,
+                                                   const QVariantMap &arguments,
+                                                   const QString &workspacePath)
+{
+    QVector<FileChange> changes;
+    const QString operation = arguments.value(QStringLiteral("operation")).toString();
+    const auto resolve = [&](const QString &path) -> QString {
+        if (path.trimmed().isEmpty())
+            return {};
+        if (QDir::isAbsolutePath(path))
+            return QDir::cleanPath(path);
+        return QDir(workspacePath).absoluteFilePath(path);
+    };
+    const auto readOriginal = [&](const QString &path) -> QString {
+        const QString absPath = resolve(path);
+        if (absPath.isEmpty())
+            return {};
+        return readTextFileIfExists(absPath);
+    };
+    const auto addChange = [&](const QString &path, const QString &original, const QString &modified,
+                               ChangeType type, const QString &reason) {
+        if (path.trimmed().isEmpty())
+            return;
+        changes.append(buildFileChangeFromContent(workspacePath, path, original, modified, type, reason));
+    };
+    const auto addRecursiveChanges = [&](const QString &source, const QString &destination, ChangeType type, const QString &reason) {
+        const QString absSource = resolve(source);
+        const QString absDestination = resolve(destination);
+        if (absSource.isEmpty() || absDestination.isEmpty())
+            return;
+        QFileInfo sourceInfo(absSource);
+        if (!sourceInfo.exists())
+            return;
+        if (sourceInfo.isFile()) {
+            addChange(absDestination, readTextFileIfExists(absSource),
+                      type == ChangeType::Deleted ? QString{} : readTextFileIfExists(absSource),
+                      type, reason);
+            return;
+        }
+        QDirIterator it(absSource, QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QFileInfo info = it.nextFileInfo();
+            const QString rel = QDir(absSource).relativeFilePath(info.absoluteFilePath());
+            const QString target = QDir(absDestination).filePath(rel);
+            addChange(target,
+                      readTextFileIfExists(info.absoluteFilePath()),
+                      type == ChangeType::Deleted ? QString{} : readTextFileIfExists(info.absoluteFilePath()),
+                      type, reason);
+        }
+    };
+
+    if (toolName == QStringLiteral("codex_file_system")
+        || toolName == QStringLiteral("file_system")) {
+        if (operation == QStringLiteral("write_file")
+            || operation == QStringLiteral("create_file")
+            || operation == QStringLiteral("append")) {
+            const QString path = arguments.value(QStringLiteral("path")).toString();
+            const QString absPath = resolve(path);
+            const QString original = readOriginal(path);
+            const QString content = variantMapString(arguments, {QStringLiteral("contents"), QStringLiteral("content")});
+            QString modified = original;
+            if (operation == QStringLiteral("append"))
+                modified += content;
+            else
+                modified = content;
+            addChange(absPath, original, modified,
+                      QFileInfo(absPath).exists() ? ChangeType::Modified : ChangeType::Created,
+                      operation);
+        } else if (operation == QStringLiteral("delete_file")) {
+            const QString path = arguments.value(QStringLiteral("path")).toString();
+            addChange(resolve(path), readOriginal(path), QString{}, ChangeType::Deleted, operation);
+        } else if (operation == QStringLiteral("move") || operation == QStringLiteral("rename")) {
+            const QString src = arguments.value(QStringLiteral("path")).toString();
+            const QString dst = variantMapString(arguments, {QStringLiteral("destination"), QStringLiteral("dest")});
+            addChange(resolve(dst), readOriginal(src), readOriginal(src), ChangeType::Renamed, operation);
+        } else if (operation == QStringLiteral("copy")) {
+            const QString src = arguments.value(QStringLiteral("path")).toString();
+            const QString dst = variantMapString(arguments, {QStringLiteral("destination"), QStringLiteral("dest")});
+            addChange(resolve(dst), readOriginal(src), readOriginal(src), ChangeType::Created, operation);
+        } else if (operation == QStringLiteral("move_tree") || operation == QStringLiteral("copy_tree")) {
+            const QString src = arguments.value(QStringLiteral("path")).toString();
+            const QString dst = variantMapString(arguments, {QStringLiteral("destination"), QStringLiteral("otherPath")});
+            addRecursiveChanges(src, dst, operation == QStringLiteral("move_tree") ? ChangeType::Renamed : ChangeType::Created, operation);
+        } else if (operation == QStringLiteral("write_batch")) {
+            const QVariantList files = arguments.value(QStringLiteral("files")).toList();
+            for (const QVariant &entryValue : files) {
+                const QVariantMap entry = entryValue.toMap();
+                const QString path = entry.value(QStringLiteral("path")).toString();
+                const QString absPath = resolve(path);
+                const QString original = readTextFileIfExists(absPath);
+                const QString modified = variantMapString(entry, {QStringLiteral("contents"), QStringLiteral("content")});
+                addChange(absPath, original, modified,
+                          QFileInfo(absPath).exists() ? ChangeType::Modified : ChangeType::Created,
+                          operation);
+            }
+        } else if (operation == QStringLiteral("replace_in_file")) {
+            const QString path = arguments.value(QStringLiteral("path")).toString();
+            const QString original = readOriginal(path);
+            QString modified = original;
+            const QString needle = arguments.value(QStringLiteral("old_string")).toString();
+            const QString replacement = arguments.value(QStringLiteral("new_string")).toString();
+            if (arguments.value(QStringLiteral("replaceRegex")).toBool()) {
+                QRegularExpression::PatternOptions opts = QRegularExpression::UseUnicodePropertiesOption;
+                if (!arguments.value(QStringLiteral("replaceCaseSensitive")).toBool())
+                    opts |= QRegularExpression::CaseInsensitiveOption;
+                const QRegularExpression rx(needle, opts);
+                if (rx.isValid())
+                    modified.replace(rx, replacement);
+            } else {
+                modified = applyLiteralReplacement(modified, needle, replacement,
+                                                  arguments.value(QStringLiteral("replaceCaseSensitive")).toBool());
+            }
+            addChange(resolve(path), original, modified, ChangeType::Modified, operation);
+        } else if (operation == QStringLiteral("apply_patch")) {
+            const QString patchText = arguments.value(QStringLiteral("patch")).toString();
+            const QStringList touched = extractTouchedPathsFromPatchText(patchText);
+            for (const QString &path : touched) {
+                addChange(resolve(path), readOriginal(path), patchText, ChangeType::Modified, operation);
+            }
+        }
+    } else if (toolName == QStringLiteral("file_creation")) {
+        const QString operationName = arguments.value(QStringLiteral("operation")).toString();
+        if (operationName == QStringLiteral("create_batch")) {
+            const QVariantList files = arguments.value(QStringLiteral("files")).toList();
+            for (const QVariant &entryValue : files) {
+                const QVariantMap entry = entryValue.toMap();
+                const QString path = entry.value(QStringLiteral("path")).toString();
+                const QString absPath = resolve(path);
+                const QString original = readTextFileIfExists(absPath);
+                const QString content = entry.value(QStringLiteral("content")).toString();
+                addChange(absPath, original, content,
+                          QFileInfo(absPath).exists() ? ChangeType::Modified : ChangeType::Created,
+                          operationName);
+            }
+        } else {
+            const QString path = arguments.value(QStringLiteral("path")).toString();
+            const QString absPath = resolve(path);
+            const QString original = readTextFileIfExists(absPath);
+            const QString content = arguments.value(QStringLiteral("content")).toString();
+            addChange(absPath, original, content,
+                      QFileInfo(absPath).exists() ? ChangeType::Modified : ChangeType::Created,
+                      operationName);
+        }
+    } else if (toolName == QStringLiteral("agent_file_writer")) {
+        const QString path = arguments.value(QStringLiteral("path")).toString();
+        const QString absPath = resolve(path);
+        const QString original = readTextFileIfExists(absPath);
+        const QString modified = applyAgentWriterPreview(arguments);
+        addChange(absPath, original, modified,
+                  QFileInfo(absPath).exists() ? ChangeType::Modified : ChangeType::Created,
+                  operation);
+    } else if (toolName == QStringLiteral("incremental_edit")) {
+        const QString path = arguments.value(QStringLiteral("file")).toString();
+        const QString absPath = resolve(path);
+        const QString original = readTextFileIfExists(absPath);
+        const QString modified = applyIncrementalEditPreview(arguments);
+        addChange(absPath, original, modified,
+                  QFileInfo(absPath).exists() ? ChangeType::Modified : ChangeType::Created,
+                  operation);
+    } else if (toolName == QStringLiteral("edit_file")) {
+        const QString path = arguments.value(QStringLiteral("path")).toString();
+        const QString absPath = resolve(path);
+        const QString original = readTextFileIfExists(absPath);
+        const QString modified = applyEditFilePreview(arguments);
+        addChange(absPath, original, modified,
+                  QFileInfo(absPath).exists() ? ChangeType::Modified : ChangeType::Created,
+                  arguments.value(QStringLiteral("type")).toString());
+    } else if (toolName == QStringLiteral("Write")) {
+        const QString path = variantMapString(arguments, {QStringLiteral("file_path"), QStringLiteral("path")});
+        const QString absPath = resolve(path);
+        const QString original = readTextFileIfExists(absPath);
+        const QString modified = variantMapString(arguments, {QStringLiteral("new_text"), QStringLiteral("content")});
+        addChange(absPath, original, modified,
+                  QFileInfo(absPath).exists() ? ChangeType::Modified : ChangeType::Created,
+                  QStringLiteral("Write"));
+    } else if (toolName == QStringLiteral("Edit")) {
+        const QString path = variantMapString(arguments, {QStringLiteral("file_path"), QStringLiteral("path")});
+        const QString absPath = resolve(path);
+        const QString original = readTextFileIfExists(absPath);
+        const QString needle = variantMapString(arguments, {QStringLiteral("old_text"), QStringLiteral("search")});
+        const QString replacement = variantMapString(arguments, {QStringLiteral("new_text"), QStringLiteral("replace")});
+        QString modified = original;
+        if (!needle.isEmpty()) {
+            const bool caseSensitive = !arguments.contains(QStringLiteral("case_sensitive"))
+                || arguments.value(QStringLiteral("case_sensitive")).toBool();
+            const bool useRegex = arguments.value(QStringLiteral("regex")).toBool();
+            if (useRegex) {
+                QRegularExpression::PatternOptions options = QRegularExpression::UseUnicodePropertiesOption;
+                if (!caseSensitive)
+                    options |= QRegularExpression::CaseInsensitiveOption;
+                const QRegularExpression rx(needle, options);
+                if (rx.isValid())
+                    modified.replace(rx, replacement);
+            } else {
+                modified = applyLiteralReplacement(modified, needle, replacement, caseSensitive);
+            }
+        }
+        addChange(absPath, original, modified,
+                  QFileInfo(absPath).exists() ? ChangeType::Modified : ChangeType::Created,
+                  QStringLiteral("Edit"));
+    } else if (toolName == QStringLiteral("MultiEdit")) {
+        const QString path = variantMapString(arguments, {QStringLiteral("file_path"), QStringLiteral("path")});
+        const QString absPath = resolve(path);
+        const QString original = readTextFileIfExists(absPath);
+        QString modified = original;
+        const QVariantList edits = arguments.value(QStringLiteral("edits")).toList();
+        for (const QVariant &editValue : edits) {
+            const QVariantMap edit = editValue.toMap();
+            const QString oldText = variantMapString(edit, {QStringLiteral("old_text"), QStringLiteral("search")});
+            const QString newText = variantMapString(edit, {QStringLiteral("new_text"), QStringLiteral("replace")});
+            if (oldText.isEmpty())
+                continue;
+            modified = applyLiteralReplacement(modified, oldText, newText, true);
+        }
+        addChange(absPath, original, modified,
+                  QFileInfo(absPath).exists() ? ChangeType::Modified : ChangeType::Created,
+                  QStringLiteral("MultiEdit"));
+    } else if (toolName == QStringLiteral("smart_file_creator")) {
+        const QString mode = arguments.value(QStringLiteral("mode")).toString();
+        if (mode == QStringLiteral("batch") || mode == QStringLiteral("structure")) {
+            const QVariantList files = arguments.value(QStringLiteral("files")).toList();
+            for (const QVariant &fileValue : files) {
+                const QVariantMap entry = fileValue.toMap();
+                const QString path = entry.value(QStringLiteral("path")).toString();
+                const QString absPath = resolve(path);
+                const QString original = readTextFileIfExists(absPath);
+                const QString modified = variantMapString(entry, {QStringLiteral("content"), QStringLiteral("intent"), QStringLiteral("template")});
+                addChange(absPath, original, modified,
+                          QFileInfo(absPath).exists() ? ChangeType::Modified : ChangeType::Created,
+                          mode);
+            }
+        } else {
+            const QString path = variantMapString(arguments, {QStringLiteral("path")});
+            const QString absPath = resolve(path);
+            const QString original = readTextFileIfExists(absPath);
+            QString modified = variantMapString(arguments, {QStringLiteral("content"), QStringLiteral("intent"), QStringLiteral("template")});
+            if (modified.isEmpty())
+                modified = QStringLiteral("smart_file_creator:%1").arg(path);
+            addChange(absPath, original, modified,
+                      QFileInfo(absPath).exists() ? ChangeType::Modified : ChangeType::Created,
+                      mode);
+        }
+    } else if (toolName == QStringLiteral("batch_files")) {
+        const QString type = arguments.value(QStringLiteral("type")).toString();
+        if (type == QStringLiteral("batch_create") || type == QStringLiteral("create_structure")) {
+            const QJsonArray files = arguments.value(QStringLiteral("files")).toJsonArray();
+            for (const QJsonValue &fileValue : files) {
+                const QVariantMap entry = fileValue.toObject().toVariantMap();
+                const QString path = entry.value(QStringLiteral("path")).toString();
+                const QString absPath = resolve(path);
+                const QString original = readTextFileIfExists(absPath);
+                const QString modified = entry.value(QStringLiteral("content")).toString();
+                addChange(absPath, original, modified,
+                          QFileInfo(absPath).exists() ? ChangeType::Modified : ChangeType::Created,
+                          type);
+            }
+        } else if (type == QStringLiteral("batch_delete")) {
+            const QVariantList paths = arguments.value(QStringLiteral("paths")).toList();
+            for (const QVariant &pathValue : paths) {
+                const QString path = pathValue.toString();
+                addChange(resolve(path), readTextFileIfExists(resolve(path)), QString{}, ChangeType::Deleted, type);
+            }
+        } else if (type == QStringLiteral("batch_move") || type == QStringLiteral("batch_copy")) {
+            const QVariantList sourceArray = arguments.value(QStringLiteral("source")).toList();
+            const QVariantList destinationArray = arguments.value(QStringLiteral("destination")).toList();
+            const int count = qMin(sourceArray.size(), destinationArray.size());
+            for (int i = 0; i < count; ++i) {
+                const QString src = sourceArray.at(i).toString();
+                const QString dst = destinationArray.at(i).toString();
+                const QString original = readTextFileIfExists(resolve(src));
+                addChange(resolve(dst), original, original,
+                          type == QStringLiteral("batch_move") ? ChangeType::Renamed : ChangeType::Created,
+                          type);
+            }
+        }
+    } else if (toolName == QStringLiteral("file_sync")) {
+        const QString type = arguments.value(QStringLiteral("type")).toString();
+        if (type == QStringLiteral("sync")) {
+            const QString src = arguments.value(QStringLiteral("source")).toString();
+            const QString dst = arguments.value(QStringLiteral("destination")).toString();
+            const QString absSrc = resolve(src);
+            const QString absDst = resolve(dst);
+            QFileInfo srcInfo(absSrc);
+            if (srcInfo.isFile()) {
+                addChange(absDst, readTextFileIfExists(absSrc), readTextFileIfExists(absSrc),
+                          QFileInfo(absDst).exists() ? ChangeType::Modified : ChangeType::Created,
+                          type);
+            } else if (srcInfo.isDir()) {
+                QDirIterator it(absSrc, QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden, QDirIterator::Subdirectories);
+                while (it.hasNext()) {
+                    const QFileInfo info = it.nextFileInfo();
+                    const QString rel = QDir(absSrc).relativeFilePath(info.absoluteFilePath());
+                    const QString target = QDir(absDst).filePath(rel);
+                    addChange(target, readTextFileIfExists(info.absoluteFilePath()), readTextFileIfExists(info.absoluteFilePath()),
+                              QFileInfo(target).exists() ? ChangeType::Modified : ChangeType::Created,
+                              type);
+                }
+            }
+        } else if (type == QStringLiteral("backup")) {
+            const QString src = arguments.value(QStringLiteral("source")).toString();
+            const QString absSrc = resolve(src);
+            const QFileInfo srcInfo(absSrc);
+            if (srcInfo.exists()) {
+                const QString backupTarget = QDir(workspacePath).filePath(QStringLiteral(".backups/%1").arg(srcInfo.fileName()));
+                addChange(backupTarget, QString{}, readTextFileIfExists(absSrc), ChangeType::Created, type);
+            }
+        } else if (type == QStringLiteral("cleanup")) {
+            const QString source = arguments.value(QStringLiteral("source")).toString();
+            addChange(resolve(source), readTextFileIfExists(resolve(source)), QString{}, ChangeType::Deleted, type);
+        }
+    } else if (toolName == QStringLiteral("patch")) {
+        const QString patchText = arguments.value(QStringLiteral("patch")).toString();
+        const QStringList touched = extractTouchedPathsFromPatchText(patchText);
+        for (const QString &path : touched) {
+            addChange(resolve(path), readOriginal(path), patchText, ChangeType::Modified, QStringLiteral("patch"));
+        }
+    }
+
+    return changes;
+}
+
+static CodeChangePipelinePlan buildCodeChangePipelinePlan(const QString &toolName,
+                                                          const QVariantMap &arguments,
+                                                          const QString &workspacePath)
+{
+    CodeChangePipelinePlan plan;
+    const QVector<FileChange> changes = buildPlannedFileChanges(toolName, arguments, workspacePath);
+    if (changes.isEmpty())
+        return plan;
+
+    plan.changeSet.changeSetId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    plan.changeSet.branchName = QStringLiteral("agent-workspace");
+    plan.changeSet.createdAt = QDateTime::currentDateTimeUtc();
+    plan.changeSet.commitMessage = QStringLiteral("%1: %2").arg(toolName, variantMapString(arguments, {QStringLiteral("path"), QStringLiteral("file"), QStringLiteral("operation")}));
+    plan.changeSet.fileChanges = changes;
+    plan.changeSet.totalFiles = changes.size();
+    for (const FileChange &change : changes) {
+        plan.changeSet.totalAdditions += change.totalAdditions;
+        plan.changeSet.totalDeletions += change.totalDeletions;
+        plan.changeSet.totalModifications += change.totalModifications;
+    }
+
+    CodeChangeTracker tracker;
+    tracker.recordBatch(plan.changeSet);
+    plan.validation = CodeChangeValidator().validateChangeSet(plan.changeSet);
+    CodeQualityAnalyzer analyzer;
+    plan.quality = analyzer.analyzeChangeSet(plan.changeSet);
+    CodeReviewOrchestrator reviewer;
+    reviewer.setCodeChangeTracker(&tracker);
+    plan.review = reviewer.conductReview(plan.changeSet);
+    plan.valid = plan.validation.isValid;
+    plan.approved = plan.valid && reviewer.isApprovedForMerge(plan.review);
+    plan.summary = QStringLiteral("%1 file(s), %2 validation issue(s), %3 review decision")
+                       .arg(plan.changeSet.totalFiles)
+                       .arg(plan.validation.violations.size())
+                       .arg(static_cast<int>(plan.review.finalDecision));
+    return plan;
+}
+
+static QVariantMap codeChangePlanToVariantMap(const CodeChangePipelinePlan &plan)
+{
+    QVariantMap out;
+    QVariantMap changeSet;
+    changeSet.insert(QStringLiteral("changeSetId"), plan.changeSet.changeSetId);
+    changeSet.insert(QStringLiteral("branchName"), plan.changeSet.branchName);
+    changeSet.insert(QStringLiteral("commitMessage"), plan.changeSet.commitMessage);
+    changeSet.insert(QStringLiteral("totalFiles"), plan.changeSet.totalFiles);
+    changeSet.insert(QStringLiteral("totalAdditions"), plan.changeSet.totalAdditions);
+    changeSet.insert(QStringLiteral("totalDeletions"), plan.changeSet.totalDeletions);
+    changeSet.insert(QStringLiteral("totalModifications"), plan.changeSet.totalModifications);
+    out.insert(QStringLiteral("changeSet"), changeSet);
+
+    QVariantMap validation;
+    validation.insert(QStringLiteral("isValid"), plan.validation.isValid);
+    validation.insert(QStringLiteral("errorCount"), plan.validation.errorCount);
+    validation.insert(QStringLiteral("warningCount"), plan.validation.warningCount);
+    validation.insert(QStringLiteral("infoCount"), plan.validation.infoCount);
+    validation.insert(QStringLiteral("validationScore"), plan.validation.validationScore);
+    validation.insert(QStringLiteral("summary"), plan.validation.summary);
+    out.insert(QStringLiteral("validation"), validation);
+
+    QVariantMap quality;
+    quality.insert(QStringLiteral("overallScore"), plan.quality.overallScore);
+    quality.insert(QStringLiteral("criticalIssues"), plan.quality.criticalIssues);
+    quality.insert(QStringLiteral("warnings"), plan.quality.warnings);
+    quality.insert(QStringLiteral("suggestions"), plan.quality.suggestions);
+    quality.insert(QStringLiteral("summary"), plan.quality.summary);
+    out.insert(QStringLiteral("quality"), quality);
+
+    QVariantMap review;
+    review.insert(QStringLiteral("reviewId"), plan.review.reviewId);
+    review.insert(QStringLiteral("finalDecision"), static_cast<int>(plan.review.finalDecision));
+    review.insert(QStringLiteral("consensusScore"), plan.review.consensusScore);
+    review.insert(QStringLiteral("canMerge"), plan.review.canMerge);
+    review.insert(QStringLiteral("summary"), plan.review.summary);
+    review.insert(QStringLiteral("criticalIssues"), plan.review.criticalIssues);
+    review.insert(QStringLiteral("warnings"), plan.review.warnings);
+    review.insert(QStringLiteral("suggestions"), plan.review.suggestions);
+    out.insert(QStringLiteral("review"), review);
+
+    out.insert(QStringLiteral("approved"), plan.approved);
+    out.insert(QStringLiteral("summary"), plan.summary);
+    return out;
 }
 
 namespace ApprovalPreview {
@@ -1692,6 +2350,12 @@ AgentController::AgentController(QObject *parent) : QObject(parent)
     if (m_fileService) {
         connect(m_fileService, &FileService::fileChanged,
                 this, &AgentController::onWatchedFileChanged);
+        connect(m_fileService, &FileService::directoryChanged,
+                this, [this](const QString &path) {
+                    qInfo().noquote() << "[AgentController] directoryChanged ->" << path;
+                    if (m_workspaceIndex)
+                        m_workspaceIndex->refresh();
+                });
     }
 
     // Phase 2: Advanced Features Providers
@@ -1893,7 +2557,8 @@ QString AgentController::approvalRiskLevelForTool(const QString &toolName, const
         return name == QStringLiteral("run_docker_command") ? QStringLiteral("low") : QStringLiteral("high");
     }
 
-    if (name == QStringLiteral("file_system")
+    if (name == QStringLiteral("Write")
+        || name == QStringLiteral("file_system")
         || name == QStringLiteral("codex_file_system")
         || name == QStringLiteral("agent_file_writer")
         || name == QStringLiteral("file_creation")
@@ -2124,6 +2789,54 @@ QVariantMap AgentController::executePendingTool(const QString &approvalId)
     if (!tool)
         return {{QStringLiteral("error"), QStringLiteral("Unknown tool: %1").arg(pending.toolName)}};
 
+    QVariantMap codeChangePreview;
+    if (isTrackedCodeChangeTool(pending.toolName, pending.arguments)) {
+        const CodeChangePipelinePlan plan = buildCodeChangePipelinePlan(pending.toolName, pending.arguments, m_workspacePath);
+        codeChangePreview = codeChangePlanToVariantMap(plan);
+        appendExecutionEvent(QStringLiteral("code_change_track"),
+                             QStringLiteral("Code change tracked"),
+                             QStringLiteral("done"),
+                             plan.summary,
+                             pending.toolName,
+                             approvalId);
+        appendExecutionEvent(QStringLiteral("code_change_validate"),
+                             plan.validation.isValid ? QStringLiteral("Code change validated") : QStringLiteral("Code change validation failed"),
+                             plan.validation.isValid ? QStringLiteral("done") : QStringLiteral("error"),
+                             plan.validation.summary,
+                             pending.toolName,
+                             approvalId);
+        appendExecutionEvent(QStringLiteral("code_change_review"),
+                             plan.review.canMerge ? QStringLiteral("Code change reviewed") : QStringLiteral("Code change review blocked"),
+                             plan.review.canMerge ? QStringLiteral("done") : QStringLiteral("error"),
+                             plan.review.summary,
+                             pending.toolName,
+                             approvalId);
+        if (!plan.approved) {
+            appendExecutionEvent(QStringLiteral("code_change_approval"),
+                                 QStringLiteral("Code change rejected"),
+                                 QStringLiteral("error"),
+                                 QStringLiteral("%1 | %2").arg(plan.validation.summary, plan.review.summary),
+                                 pending.toolName,
+                                 approvalId);
+            QVariantMap rejected;
+            rejected.insert(QStringLiteral("toolName"), pending.toolName);
+            rejected.insert(QStringLiteral("callId"), approvalId);
+            rejected.insert(QStringLiteral("approved"), false);
+            rejected.insert(QStringLiteral("isError"), true);
+            rejected.insert(QStringLiteral("error"), QStringLiteral("Code change pipeline rejected the mutation."));
+            rejected.insert(QStringLiteral("codeChange"), codeChangePreview);
+            if (!m_restoringSessionHistory)
+                saveTaskSession();
+            return rejected;
+        }
+        appendExecutionEvent(QStringLiteral("code_change_approval"),
+                             QStringLiteral("Code change approved"),
+                             QStringLiteral("done"),
+                             plan.summary,
+                             pending.toolName,
+                             approvalId);
+    }
+
     appendExecutionEvent(QStringLiteral("tool_execution"),
                          QStringLiteral("Tool execution started"),
                          QStringLiteral("running"),
@@ -2170,6 +2883,8 @@ QVariantMap AgentController::executePendingTool(const QString &approvalId)
     response.insert(QStringLiteral("isError"), toolResult.isError);
     response.insert(QStringLiteral("content"), toolResult.content);
     response.insert(QStringLiteral("summary"), pending.summary);
+    if (!codeChangePreview.isEmpty())
+        response.insert(QStringLiteral("codeChange"), codeChangePreview);
     if (!accumulatedOutput.isEmpty())
         response.insert(QStringLiteral("streamOutput"), accumulatedOutput);
 
@@ -2339,6 +3054,7 @@ QVariantMap AgentController::executeToolByName(const QString &toolName, const QV
         return response;
     }
 
+    const bool trackedCodeChangeTool = isTrackedCodeChangeTool(toolName, arguments);
     QString riskLevel;
     QString reason;
     const bool needsApproval = toolNeedsApproval(toolName, arguments, &riskLevel, &reason);
@@ -2346,11 +3062,16 @@ QVariantMap AgentController::executeToolByName(const QString &toolName, const QV
 
     if (needsApproval && !m_autoApproveTools) {
         const QJsonObject jsonArgs = variantMapToJsonObject(arguments);
-        m_pendingToolExecutions.insert(callId, PendingToolExecution{toolName, arguments, tool->summary(jsonArgs), riskLevel});
-        m_pendingApprovalPreviews.insert(callId, QVariantMap{
+        QVariantMap preview{
             {QStringLiteral("toolName"), toolName},
-            {QStringLiteral("arguments"), arguments}
-        });
+            {QStringLiteral("arguments"), arguments},
+        };
+        if (trackedCodeChangeTool) {
+            const CodeChangePipelinePlan plan = buildCodeChangePipelinePlan(toolName, arguments, m_workspacePath);
+            preview.insert(QStringLiteral("codeChange"), codeChangePlanToVariantMap(plan));
+        }
+        m_pendingToolExecutions.insert(callId, PendingToolExecution{toolName, arguments, tool->summary(jsonArgs), riskLevel});
+        m_pendingApprovalPreviews.insert(callId, preview);
         emit toolApprovalRequired(callId, toolName, tool->summary(jsonArgs), riskLevel, reason);
         response.insert(QStringLiteral("pending"), true);
         response.insert(QStringLiteral("approvalId"), callId);
@@ -2366,6 +3087,64 @@ QVariantMap AgentController::executeToolByName(const QString &toolName, const QV
         if (!m_restoringSessionHistory)
             saveTaskSession();
         return response;
+    }
+
+    if (trackedCodeChangeTool) {
+        const CodeChangePipelinePlan plan = buildCodeChangePipelinePlan(toolName, arguments, m_workspacePath);
+        response.insert(QStringLiteral("codeChange"), codeChangePlanToVariantMap(plan));
+        if (!plan.approved) {
+            appendExecutionEvent(QStringLiteral("code_change_track"),
+                                 QStringLiteral("Code change tracked"),
+                                 QStringLiteral("done"),
+                                 plan.summary,
+                                 toolName,
+                                 callId);
+            appendExecutionEvent(QStringLiteral("code_change_validate"),
+                                 plan.validation.isValid ? QStringLiteral("Code change validated") : QStringLiteral("Code change validation failed"),
+                                 plan.validation.isValid ? QStringLiteral("done") : QStringLiteral("error"),
+                                 plan.validation.summary,
+                                 toolName,
+                                 callId);
+            appendExecutionEvent(QStringLiteral("code_change_review"),
+                                 plan.review.canMerge ? QStringLiteral("Code change reviewed") : QStringLiteral("Code change review blocked"),
+                                 plan.review.canMerge ? QStringLiteral("done") : QStringLiteral("error"),
+                                 plan.review.summary,
+                                 toolName,
+                                 callId);
+            appendExecutionEvent(QStringLiteral("code_change_approval"),
+                                 QStringLiteral("Code change rejected"),
+                                 QStringLiteral("error"),
+                                 QStringLiteral("%1 | %2").arg(plan.validation.summary, plan.review.summary),
+                                 toolName,
+                                 callId);
+            response.insert(QStringLiteral("error"), QStringLiteral("Code change pipeline rejected the mutation."));
+            emit errorOccurred(QStringLiteral("Code change pipeline rejected the mutation."));
+            return response;
+        }
+        appendExecutionEvent(QStringLiteral("code_change_track"),
+                             QStringLiteral("Code change tracked"),
+                             QStringLiteral("done"),
+                             plan.summary,
+                             toolName,
+                             callId);
+        appendExecutionEvent(QStringLiteral("code_change_validate"),
+                             plan.validation.isValid ? QStringLiteral("Code change validated") : QStringLiteral("Code change validation failed"),
+                             plan.validation.isValid ? QStringLiteral("done") : QStringLiteral("error"),
+                             plan.validation.summary,
+                             toolName,
+                             callId);
+        appendExecutionEvent(QStringLiteral("code_change_review"),
+                             plan.review.canMerge ? QStringLiteral("Code change reviewed") : QStringLiteral("Code change review blocked"),
+                             plan.review.canMerge ? QStringLiteral("done") : QStringLiteral("error"),
+                             plan.review.summary,
+                             toolName,
+                             callId);
+        appendExecutionEvent(QStringLiteral("code_change_approval"),
+                             QStringLiteral("Code change approved"),
+                             QStringLiteral("done"),
+                             plan.summary,
+                             toolName,
+                             callId);
     }
 
     appendExecutionEvent(QStringLiteral("tool_execution"),
@@ -2472,6 +3251,10 @@ QVariantMap AgentController::toolApprovalPreview(const QString &callId) const
             patchText, m_workspacePath.trimmed().isEmpty() ? QDir::currentPath() : m_workspacePath);
         for (auto it = visualPreview.begin(); it != visualPreview.end(); ++it)
             result.insert(it.key(), it.value());
+    }
+    if (isTrackedCodeChangeTool(toolName, arguments)) {
+        const CodeChangePipelinePlan plan = buildCodeChangePipelinePlan(toolName, arguments, m_workspacePath);
+        result.insert(QStringLiteral("codeChange"), codeChangePlanToVariantMap(plan));
     }
     return result;
 }
@@ -3126,6 +3909,12 @@ void AgentController::setupEngine()
                     qInfo().noquote() << "[agent] tool approval required:" << call.name
                                       << "callId=" << call.id
                                       << "risk=" << riskLevel;
+                    const QVariantMap callArgs = call.arguments.toVariantMap();
+                    QVariantMap codeChangePreview;
+                    if (isTrackedCodeChangeTool(call.name, callArgs)) {
+                        const CodeChangePipelinePlan plan = buildCodeChangePipelinePlan(call.name, callArgs, m_workspacePath);
+                        codeChangePreview = codeChangePlanToVariantMap(plan);
+                    }
                     appendExecutionEvent(
                         QStringLiteral("approval"),
                         riskLevel == QStringLiteral("high")
@@ -3139,7 +3928,18 @@ void AgentController::setupEngine()
                         {QStringLiteral("toolName"), call.name},
                         {QStringLiteral("arguments"), call.arguments.toVariantMap()}
                     });
+                    if (!codeChangePreview.isEmpty()) {
+                        m_pendingApprovalPreviews[call.id].insert(QStringLiteral("codeChange"), codeChangePreview);
+                    }
                     saveTaskSession();
+                    QVariantMap toolCard;
+                    toolCard.insert(QStringLiteral("id"), call.id);
+                    toolCard.insert(QStringLiteral("name"), call.name);
+                    toolCard.insert(QStringLiteral("status"), QStringLiteral("pending"));
+                    toolCard.insert(QStringLiteral("args"), QJsonDocument(call.arguments).toJson(QJsonDocument::Indented));
+                    if (!codeChangePreview.isEmpty())
+                        toolCard.insert(QStringLiteral("codeChange"), codeChangePreview);
+                    m_chatModel->updateToolCall(call.id, toolCard);
                     emit toolApprovalRequired(call.id,
                                               call.name,
                                               m_registry->tool(call.name)
@@ -3941,6 +4741,7 @@ void AgentController::setWorkspacePath(const QString &path)
     m_registry->registerTool(new GeminiGroundingTool(m_registry));
     m_registry->registerTool(new WebFetchTool(m_registry));
     m_registry->registerTool(new CodexTool(path, m_registry));
+    m_registry->registerTool(new CodePerceptionTool(path, m_registry));
     m_registry->registerTool(new DelegationTool(m_registry, m_providers.value(m_currentProvider), m_currentModel, m_registry));
     m_registry->registerTool(new AgentFileWriterTool(path, m_registry));
     auto *checkpointTool = new CheckpointTool(path, m_registry);
@@ -4038,7 +4839,12 @@ void AgentController::setWorkspacePath(const QString &path)
     // �🎯 Phase 1: Core Framework Tools (GitWorkflowTool is a BaseTool)
     qDebug() << "[AgentController] Registering Phase 1 framework tools...";
     m_registry->registerTool(new GitWorkflowTool(m_registry));
-    
+
+    if (m_engine && m_engine->recoveryManager()) {
+        m_registry->registerTool(new RecoveryTool(m_engine->recoveryManager(), m_registry));
+        m_registry->registerTool(new ListCheckpointsTool(m_engine->recoveryManager(), m_registry));
+    }
+
     // TODO: Integrate HookManager and SecurityScanner as non-tool components
     // HookManager: For lifecycle hook management
     // SecurityScanner: For code pattern scanning and security validation
@@ -5562,6 +6368,26 @@ void AgentController::submitToAgent(const QString &text, const QVariantList &att
     m_streamingText.clear();
     m_streamingAssistantActive = false;
     appendSessionStoreMessage(QStringLiteral("user"), sessionText);
+
+    // 🧠 RAG: Auto-search knowledge base for relevant context if available
+    if (m_registry && !text.isEmpty()) {
+        if (auto *knowledgeTool = qobject_cast<KnowledgeTool *>(m_registry->tool("knowledge"))) {
+            QString error;
+            QVariantList results = knowledgeTool->searchEntries(text, 5, &error);
+            if (error.isEmpty() && !results.isEmpty()) {
+                QString ragContext = "### Automated Knowledge Base Search Results\n";
+                for (const auto &itemVar : results) {
+                    QVariantMap item = itemVar.toMap();
+                    ragContext += QString("--- Source: %1 ---\n%2\n\n")
+                                    .arg(item["path"].toString())
+                                    .arg(item["content"].toString());
+                }
+                m_engine->injectContext("knowledge_rag", ragContext);
+                qInfo() << "[AgentController] Injected RAG context from knowledge base (" << results.size() << " results)";
+            }
+        }
+    }
+
     m_engine->submitUserMessage(text, effectiveAttachments);
     if (attachments.isEmpty() && !m_pendingAttachments.isEmpty()) {
         m_pendingAttachments.clear();
@@ -5684,6 +6510,7 @@ void AgentController::clearHistory()
     m_chatModel->clear();
     m_executionTimeline.clear();
     m_pendingToolExecutions.clear();
+    m_runningToolArguments.clear();
     emit executionTimelineChanged();
     emit toolCatalogChanged();
     clearPendingAttachments();
@@ -5814,6 +6641,13 @@ void AgentController::onToolExecuting(const ToolCall &call)
 {
     qInfo().noquote() << "[agent] tool executing:" << call.name
                       << "callId=" << call.id;
+    const QVariantMap callArgs = call.arguments.toVariantMap();
+    m_runningToolArguments.insert(call.id, callArgs);
+    QVariantMap codeChangePreview;
+    if (isTrackedCodeChangeTool(call.name, callArgs)) {
+        const CodeChangePipelinePlan plan = buildCodeChangePipelinePlan(call.name, callArgs, m_workspacePath);
+        codeChangePreview = codeChangePlanToVariantMap(plan);
+    }
     appendExecutionEvent(
         inferExecutionKind(call.name),
         QStringLiteral("Tool running"),
@@ -5828,6 +6662,8 @@ void AgentController::onToolExecuting(const ToolCall &call)
     card["name"]   = call.name;
     card["status"] = "running";
     card["args"]   = QJsonDocument(call.arguments).toJson(QJsonDocument::Indented);
+    if (!codeChangePreview.isEmpty())
+        card["codeChange"] = codeChangePreview;
     m_chatModel->appendToolCallToLastAssistant(card);
 }
 
@@ -5853,6 +6689,9 @@ void AgentController::onToolFinished(const ToolResult &result)
     card["name"]   = result.name;
     card["status"] = result.isError ? "error" : "done";
     card["result"] = result.content;
+    const QVariantMap callArgs = m_runningToolArguments.take(result.callId);
+    if (!callArgs.isEmpty() && isTrackedCodeChangeTool(result.name, callArgs))
+        card["codeChange"] = codeChangePlanToVariantMap(buildCodeChangePipelinePlan(result.name, callArgs, m_workspacePath));
     m_chatModel->updateToolCall(result.callId, card);
 
     if (!result.isError

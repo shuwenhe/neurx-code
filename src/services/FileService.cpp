@@ -9,6 +9,8 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QStringConverter>
+#include <QSaveFile>
+#include <QSet>
 
 namespace {
 
@@ -64,7 +66,72 @@ class FileService::Impl {
 public:
     QFileSystemWatcher watcher;
     QStringList recentFiles;
+    QSet<QString> recursiveRoots;
+    QSet<QString> watchedPaths;
     static constexpr int MAX_RECENT = 50;
+
+    static QString normalizePath(const QString& path) {
+        return QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    }
+
+    bool addPath(const QString& path) {
+        const QString normalized = normalizePath(path);
+        if (normalized.isEmpty())
+            return false;
+        if (watchedPaths.contains(normalized))
+            return true;
+        const bool added = watcher.addPath(normalized);
+        if (added)
+            watchedPaths.insert(normalized);
+        return added;
+    }
+
+    void removePath(const QString& path) {
+        const QString normalized = normalizePath(path);
+        if (normalized.isEmpty())
+            return;
+        watcher.removePath(normalized);
+        watchedPaths.remove(normalized);
+    }
+
+    void addRecursiveRoot(const QString& root) {
+        const QString normalizedRoot = normalizePath(root);
+        if (normalizedRoot.isEmpty() || recursiveRoots.contains(normalizedRoot))
+            return;
+
+        recursiveRoots.insert(normalizedRoot);
+        addPath(normalizedRoot);
+
+        QDirIterator it(normalizedRoot, QDir::AllEntries | QDir::NoDotAndDotDot,
+                        QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            addPath(it.next());
+        }
+    }
+
+    void removeRecursiveRoot(const QString& root) {
+        const QString normalizedRoot = normalizePath(root);
+        if (normalizedRoot.isEmpty())
+            return;
+
+        recursiveRoots.remove(normalizedRoot);
+        const auto removeIfUnderRoot = [&](const QStringList& list) {
+            for (const QString& watched : list) {
+                if (watched == normalizedRoot
+                    || watched.startsWith(normalizedRoot + QDir::separator())) {
+                    watcher.removePath(watched);
+                    watchedPaths.remove(watched);
+                }
+            }
+        };
+        removeIfUnderRoot(watcher.files());
+        removeIfUnderRoot(watcher.directories());
+    }
+
+    bool isWatched(const QString& path) const {
+        const QString normalized = normalizePath(path);
+        return watchedPaths.contains(normalized) || recursiveRoots.contains(normalized);
+    }
     
     QString detectEncodingInternal(const QByteArray& data) {
         // Simple encoding detection - BOM check
@@ -91,6 +158,20 @@ FileService::FileService()
     connect(&m_impl->watcher, &QFileSystemWatcher::fileChanged,
             this, [this](const QString& path) {
                 emit fileChanged(path);
+                if (QFileInfo::exists(path)) {
+                    m_impl->addPath(path);
+                }
+            });
+    connect(&m_impl->watcher, &QFileSystemWatcher::directoryChanged,
+            this, [this](const QString& path) {
+                emit directoryChanged(path);
+                for (const QString& root : std::as_const(m_impl->recursiveRoots)) {
+                    if (path == root
+                        || path.startsWith(root + QDir::separator())
+                        || root.startsWith(path + QDir::separator())) {
+                        m_impl->addRecursiveRoot(root);
+                    }
+                }
             });
 }
 
@@ -149,7 +230,101 @@ bool FileService::moveFile(const QString& source, const QString& destination) {
 }
 
 bool FileService::copyFile(const QString& source, const QString& destination) {
+    return copyFile(source, destination, /*recursive*/ false);
+}
+
+bool FileService::copyFile(const QString& source, const QString& destination, bool recursive) {
+    QFileInfo srcInfo(source);
+    if (srcInfo.isDir()) {
+        if (!recursive) return false;
+
+        QDir targetDir(destination);
+        if (!targetDir.exists()) {
+            if (!QDir().mkpath(destination)) return false;
+        }
+
+        QDir srcDir(source);
+        QFileInfoList entries = srcDir.entryInfoList(QDir::NoDotAndDotDot | QDir::AllEntries);
+        for (const QFileInfo& entry : entries) {
+            QString relPath = srcDir.relativeFilePath(entry.filePath());
+            QString destPath = QDir(destination).filePath(relPath);
+            if (entry.isDir()) {
+                if (!copyFile(entry.filePath(), destPath, true)) return false;
+            } else {
+                QDir().mkpath(QFileInfo(destPath).absolutePath());
+                if (!QFile::copy(entry.filePath(), destPath)) return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Regular file
+    QDir().mkpath(QFileInfo(destination).absolutePath());
     return QFile::copy(source, destination);
+}
+
+FileInfo FileService::getMetadata(const QString& path) const {
+    return getFileInfo(path);
+}
+
+QString FileService::canonicalize(const QString& path) const {
+    QFileInfo fi(path);
+    QString canonical = fi.canonicalFilePath();
+    if (canonical.isEmpty()) return fi.absoluteFilePath();
+    return canonical;
+}
+
+QString FileService::joinPaths(const QString& base, const QString& relative) const {
+    QDir baseDir(base);
+    return baseDir.filePath(relative);
+}
+
+QString FileService::parentPath(const QString& path) const {
+    QFileInfo fi(path);
+    return fi.dir().absolutePath();
+}
+
+bool FileService::writeFileAtomic(const QString& path, const QByteArray& content) {
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        return false;
+    }
+    qint64 written = file.write(content);
+    if (written != content.size()) {
+        file.cancelWriting();
+        return false;
+    }
+    return file.commit();
+}
+
+bool FileService::removePath(const QString& path, bool recursive, bool force) {
+    QFileInfo fi(path);
+    if (!fi.exists()) return true;
+
+    if (fi.isDir()) {
+        if (!recursive) {
+            QDir dir(path);
+            return dir.rmdir(path);
+        }
+        // recursive delete
+        QDir dir(path);
+        // If force, attempt to change permissions on files
+        if (force) {
+            QFileInfoList entries = dir.entryInfoList(QDir::NoDotAndDotDot | QDir::AllEntries, QDir::DirsFirst);
+            for (const QFileInfo& entry : entries) {
+                if (entry.isDir()) continue;
+                QFile::setPermissions(entry.filePath(), QFile::ReadOwner | QFile::WriteOwner);
+            }
+        }
+        return dir.removeRecursively();
+    }
+
+    // file
+    if (force) {
+        QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner);
+    }
+    return QFile::remove(path);
 }
 
 bool FileService::createDirectory(const QString& path) {
@@ -234,22 +409,43 @@ bool FileService::writeFileAsText(const QString& path, const QString& content,
     return writeFile(path, encodeText(content, encoding));
 }
 
-void FileService::watchFile(const QString& path) {
-    if (!m_impl->watcher.files().contains(path)) {
-        m_impl->watcher.addPath(path);
-        emit fileWatched(path);
+void FileService::watchFile(const QString& path, bool recursive) {
+    const QString normalized = m_impl->normalizePath(path);
+    if (normalized.isEmpty())
+        return;
+
+    QFileInfo info(normalized);
+    if (recursive && info.isDir()) {
+        m_impl->addRecursiveRoot(normalized);
+        emit fileWatched(normalized);
+        return;
+    }
+
+    if (m_impl->addPath(normalized)) {
+        emit fileWatched(normalized);
     }
 }
 
 void FileService::unwatchFile(const QString& path) {
-    if (m_impl->watcher.files().contains(path)) {
-        m_impl->watcher.removePath(path);
-        emit fileUnwatched(path);
+    const QString normalized = m_impl->normalizePath(path);
+    if (normalized.isEmpty())
+        return;
+
+    if (m_impl->recursiveRoots.contains(normalized) || QFileInfo(normalized).isDir()) {
+        m_impl->removeRecursiveRoot(normalized);
+        emit fileUnwatched(normalized);
+        return;
+    }
+
+    if (m_impl->isWatched(normalized)) {
+        m_impl->removePath(normalized);
+        emit fileUnwatched(normalized);
     }
 }
 
 bool FileService::isWatching(const QString& path) const {
-    return m_impl->watcher.files().contains(path);
+    const QString normalized = m_impl->normalizePath(path);
+    return m_impl->isWatched(normalized) || m_impl->recursiveRoots.contains(normalized);
 }
 
 QStringList FileService::getRecentFiles(int maxCount) {

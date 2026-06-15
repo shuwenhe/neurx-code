@@ -98,7 +98,22 @@ QStringList WorkspaceAnalyzer::getFileImports(const QString& filepath) {
 
 QStringList WorkspaceAnalyzer::getFileDependents(const QString& filepath) {
     QStringList dependents;
-    // Find files that include filepath
+    QString fileName = QFileInfo(filepath).fileName();
+    if (fileName.isEmpty() || m_rootPath.isEmpty()) return dependents;
+
+    QDirIterator it(m_rootPath, QStringList() << "*.cpp" << "*.h" << "*.hpp", QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        QString currentPath = it.next();
+        if (currentPath == filepath) continue;
+
+        QFile f(currentPath);
+        if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QString content = QString::fromUtf8(f.readAll());
+            if (content.contains("#include \"" + fileName + "\"") || content.contains("#include <" + fileName + ">")) {
+                dependents << QDir(m_rootPath).relativeFilePath(currentPath);
+            }
+        }
+    }
     return dependents;
 }
 
@@ -195,7 +210,19 @@ QJsonObject WorkspaceAnalyzer::getLayerAnalysis() {
 }
 
 QStringList WorkspaceAnalyzer::identifyModules() {
-    return QStringList{"CoreModule", "UIModule", "DataModule", "NetworkModule"};
+    QStringList modules;
+    if (m_rootPath.isEmpty()) return modules;
+    QDir dir(m_rootPath);
+    QStringList subDirs = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString& subDir : subDirs) {
+        if (subDir == "build" || subDir == ".git" || subDir == ".agents") continue;
+        QDir sub(dir.absoluteFilePath(subDir));
+        if (!sub.entryList(QStringList() << "*.cpp" << "*.h" << "*.qml").isEmpty()) {
+            modules << subDir;
+        }
+    }
+    if (modules.isEmpty()) modules << "RootModule";
+    return modules;
 }
 
 QString WorkspaceAnalyzer::suggestModuleReorganization() {
@@ -276,13 +303,26 @@ QString WorkspaceAnalyzer::getChangesSummary() {
 }
 
 void WorkspaceAnalyzer::calculateCodeMetrics() {
-    m_metrics.totalFiles = 45;
-    m_metrics.totalLines = 12500;
-    m_metrics.averageFileSize = 277.8f;
-    m_metrics.cyclomaticComplexity = 125;
-    m_metrics.codeToCommentRatio = 3.5f;
-    m_metrics.numberOfMethods = 340;
-    m_metrics.numberOfClasses = 25;
+    if (m_rootPath.isEmpty()) return;
+    int fileCount = 0;
+    int lineCount = 0;
+    QDirIterator it(m_rootPath, QStringList() << "*.cpp" << "*.h" << "*.hpp" << "*.qml", QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        if (it.filePath().contains("/build/")) continue;
+        fileCount++;
+        QFile f(it.filePath());
+        if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream in(&f);
+            while (!in.atEnd()) {
+                in.readLine();
+                lineCount++;
+            }
+        }
+    }
+    m_metrics.totalFiles = fileCount;
+    m_metrics.totalLines = lineCount;
+    m_metrics.averageFileSize = fileCount > 0 ? (float)lineCount / fileCount : 0;
 }
 
 void WorkspaceAnalyzer::detectPatterns() {

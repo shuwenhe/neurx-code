@@ -60,6 +60,7 @@ public:
     bool saveCheckpoint(const QString &checkpointId, const QJsonObject &state);
     QJsonObject getCheckpointState(const QString &checkpointId) const;
     bool deleteCheckpoint(const QString &checkpointId);
+    QList<Checkpoint> getAllCheckpoints() const;
 
     // Error handling
     QString recordError(const QString &taskId, ErrorType type, const QString &message,

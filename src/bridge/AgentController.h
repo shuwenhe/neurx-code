@@ -609,6 +609,7 @@ private:
     QString  m_codeMagicTargetLabel;
     QHash<QString, PendingToolExecution> m_pendingToolExecutions;
     QHash<QString, QString> m_runningToolOutput;  // callId -> accumulated streaming output
+    QHash<QString, QVariantMap> m_runningToolArguments;
     int      m_currentEditorIndex{-1};
     bool     m_autoApproveTools{false};
     bool     m_busy{false};

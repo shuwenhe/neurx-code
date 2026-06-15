@@ -3,6 +3,7 @@
 #include <QString>
 #include <QMap>
 #include <QList>
+#include <QVariantList>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QObject>
@@ -20,6 +21,7 @@ struct ContextItem {
     QJsonObject metadata;            ///< Additional metadata
     QDateTime timestamp;             ///< When added
     bool transient{false};          ///< Temporary context (cleared after use)
+    bool cacheable{false};          ///< Hint for LLM prompt caching
     int priority{0};                ///< Priority (higher = more important)
 };
 
@@ -47,14 +49,14 @@ public:
      * @brief Add a file to context
      */
     QString addFileContext(const QString &filePath, int startLine = -1, int endLine = -1,
-                          bool transient = false);
-    
+                          bool transient = false, bool cacheable = false);
+
     /**
      * @brief Add selected code to context
      */
     QString addSelectionContext(const QString &content, const QString &source = "editor",
-                               bool transient = false);
-    
+                               bool transient = false, bool cacheable = false);
+
     /**
      * @brief Add a note to context
      */
@@ -91,6 +93,16 @@ public:
      * @brief Get context as plain text (for sending to LLM)
      */
     QString getContextAsText() const;
+
+    /**
+     * @brief Export context items to a JSON-friendly list.
+     */
+    QVariantList exportContextItems() const;
+
+    /**
+     * @brief Replace the current context items from a JSON-friendly list.
+     */
+    bool importContextItems(const QVariantList &items, bool clearExisting = true);
 
     // ── Context Manipulation ────────────────────────────────────────────────
     
