@@ -36,7 +36,8 @@ static bool isVisionModel(const QString &model)
            m.contains(QStringLiteral("multimodal"));
 }
 
-static constexpr char kBaseUrl[] = "https://api.siliconflow.cn/v1/chat/completions";
+// static constexpr char kBaseUrl[] = "https://api.siliconflow.cn/v1/chat/completions";
+static constexpr char kBaseUrl[] = "http://111.202.231.146:8080/neurx";
 
 static QJsonObject parseToolArguments(const QString &rawArgs, const QString &callId)
 {
