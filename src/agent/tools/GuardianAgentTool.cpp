@@ -1,5 +1,6 @@
 #include "GuardianAgentTool.h"
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QDateTime>
 #include <QDebug>
 

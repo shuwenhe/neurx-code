@@ -7,6 +7,8 @@
 #include <QRegularExpression>
 #include <QDebug>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonDocument>
 
 EditFileTool::EditFileTool(const QString &workspaceRoot, QObject *parent)
     : BaseTool(parent)

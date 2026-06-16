@@ -3,6 +3,7 @@
 #include <QTextStream>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonDocument>
 #include <QDebug>
 
 ConfigGeneratorTool::ConfigGeneratorTool(const QString &workspaceRoot, QObject *parent)

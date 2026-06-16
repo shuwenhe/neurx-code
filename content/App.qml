@@ -1,8 +1,6 @@
 import QtQuick 6.2
 import QtQuick.Controls 6.2
 import QtQuick.Layouts 6.2
-import QtQuick.Dialogs
-import QtCore
 import NeurXCode
 
 ApplicationWindow {
@@ -16,26 +14,23 @@ ApplicationWindow {
     title: "NeurX Code — " + (agentCtx ? agentCtx.workspacePath || "No workspace" : "No workspace")
     color: Theme.bg
 
-    Settings {
-        id: appSettings
-        property string recentWorkspacesJson: "[]"
-        property int lastAgentTabIndex: 0
-        property bool sidebarVisible: true
-        property real explorerWidth: 260
-        property real agentWidth: 560
-    }
+    property string recentWorkspacesJson: "[]"
+    property int lastAgentTabIndex: 0
+    property bool sidebarVisible: true
+    property real explorerWidth: 260
+    property real agentWidth: 560
 
     function addRecentWorkspace(path) {
         if (!path) return
         try {
-            let recent = JSON.parse(appSettings.recentWorkspacesJson || "[]")
+            let recent = JSON.parse(root.recentWorkspacesJson || "[]")
             if (!Array.isArray(recent)) recent = []
             recent = recent.filter(p => p !== path)
             recent.unshift(path)
             if (recent.length > 10) recent = recent.slice(0, 10)
-            appSettings.recentWorkspacesJson = JSON.stringify(recent)
+            root.recentWorkspacesJson = JSON.stringify(recent)
         } catch (e) {
-            appSettings.recentWorkspacesJson = JSON.stringify([path])
+            root.recentWorkspacesJson = JSON.stringify([path])
         }
     }
 
@@ -47,7 +42,7 @@ ApplicationWindow {
 
     readonly property var recentWorkspaces: {
         try {
-            return JSON.parse(appSettings.recentWorkspacesJson || "[]")
+            return JSON.parse(root.recentWorkspacesJson || "[]")
         } catch (e) {
             return []
         }
@@ -153,10 +148,9 @@ ApplicationWindow {
                                 active: agentTabs.currentIndex === 0
                                 onClicked: {
                                     agentTabs.currentIndex = 0
-                                    appSettings.lastAgentTabIndex = 0
+                                    root.lastAgentTabIndex = 0
                                     if (!sidebarVisible) {
                                         sidebarVisible = true
-                                        appSettings.sidebarVisible = true
                                     }
                                 }
                                 toolTip: "AI Chat"
@@ -166,7 +160,6 @@ ApplicationWindow {
                                 active: root.sidebarVisible
                                 onClicked: {
                                     root.sidebarVisible = !root.sidebarVisible
-                                    appSettings.sidebarVisible = root.sidebarVisible
                                 }
                                 toolTip: "Explorer"
                             }
@@ -175,10 +168,9 @@ ApplicationWindow {
                                 active: agentTabs.currentIndex === 1
                                 onClicked: {
                                     agentTabs.currentIndex = 1
-                                    appSettings.lastAgentTabIndex = 1
+                                    root.lastAgentTabIndex = 1
                                     if (!root.sidebarVisible) {
                                         root.sidebarVisible = true
-                                        appSettings.sidebarVisible = true
                                     }
                                 }
                                 toolTip: "Search"
@@ -188,10 +180,9 @@ ApplicationWindow {
                                 active: agentTabs.currentIndex === 2
                                 onClicked: {
                                     agentTabs.currentIndex = 2
-                                    appSettings.lastAgentTabIndex = 2
+                                    root.lastAgentTabIndex = 2
                                     if (!root.sidebarVisible) {
                                         root.sidebarVisible = true
-                                        appSettings.sidebarVisible = true
                                     }
                                 }
                                 toolTip: "Outline"
@@ -201,10 +192,9 @@ ApplicationWindow {
                                 active: agentTabs.currentIndex === 3
                                 onClicked: {
                                     agentTabs.currentIndex = 3
-                                    appSettings.lastAgentTabIndex = 3
+                                    root.lastAgentTabIndex = 3
                                     if (!root.sidebarVisible) {
                                         root.sidebarVisible = true
-                                        appSettings.sidebarVisible = true
                                     }
                                 }
                                 toolTip: "Terminal"
@@ -214,10 +204,9 @@ ApplicationWindow {
                                 active: agentTabs.currentIndex === 8
                                 onClicked: {
                                     agentTabs.currentIndex = 8
-                                    appSettings.lastAgentTabIndex = 8
+                                    root.lastAgentTabIndex = 8
                                     if (!root.sidebarVisible) {
                                         root.sidebarVisible = true
-                                        appSettings.sidebarVisible = true
                                     }
                                 }
                                 toolTip: "Source Control"
@@ -275,7 +264,7 @@ ApplicationWindow {
                                     root.explorerDragStartWidth = root.explorerWidth
                             }
 
-                            onTranslationChanged: {
+                                onTranslationChanged: {
                                 if (!active || !sidebarVisible)
                                     return
                                 const maxWidth = root.explorerMaxWidth()
@@ -284,7 +273,6 @@ ApplicationWindow {
                                     root.minExplorerWidth,
                                     maxWidth
                                 )
-                                appSettings.explorerWidth = root.explorerWidth
                             }
                         }
 
@@ -333,7 +321,6 @@ ApplicationWindow {
                                     root.minAgentWidth,
                                     maxWidth
                                 )
-                                appSettings.agentWidth = root.agentWidth
                             }
                         }
 
@@ -360,8 +347,8 @@ ApplicationWindow {
                             id: agentTabs
                             Layout.fillWidth: true
                             Layout.preferredHeight: 0
-                            property int currentIndex: appSettings.lastAgentTabIndex
-                            onCurrentIndexChanged: appSettings.lastAgentTabIndex = currentIndex
+                            property int currentIndex: root.lastAgentTabIndex
+                            onCurrentIndexChanged: root.lastAgentTabIndex = currentIndex
                             visible: false
                         }
 
@@ -979,32 +966,85 @@ ApplicationWindow {
         onConfirmed: checkpointId => agentCtx.rollbackCheckpoint(checkpointId)
     }
 
-    FileDialog {
+    Dialog {
         id: imagePicker
+        modal: true
         title: "Attach image"
-        nameFilters: [ "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp)" ]
-        fileMode: FileDialog.OpenFile
-        onAccepted: agentCtx.attachImageFromPath(selectedFile.toString())
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: agentCtx.attachImageFromPath(imagePathField.text.trim())
+
+        contentItem: ColumnLayout {
+            width: 420
+            spacing: 8
+
+            Label {
+                Layout.fillWidth: true
+                text: "Enter an image path."
+                wrapMode: Text.WordWrap
+                color: Theme.textMuted
+            }
+
+            TextField {
+                id: imagePathField
+                Layout.fillWidth: true
+                placeholderText: "/path/to/image.png"
+            }
+        }
     }
 
-    FileDialog {
+    Dialog {
         id: workspaceFilePicker
+        modal: true
         title: "Open Workspace File"
-        nameFilters: [ "Workspace Files (*.code-workspace)", "All Files (*)" ]
-        fileMode: FileDialog.OpenFile
-        onAccepted: agentCtx.openWorkspaceFile(decodeURIComponent(selectedFile.toString().replace("file://", "")))
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: agentCtx.openWorkspaceFile(workspaceFilePathField.text.trim())
+
+        contentItem: ColumnLayout {
+            width: 420
+            spacing: 8
+
+            Label {
+                Layout.fillWidth: true
+                text: "Enter a .code-workspace file path."
+                wrapMode: Text.WordWrap
+                color: Theme.textMuted
+            }
+
+            TextField {
+                id: workspaceFilePathField
+                Layout.fillWidth: true
+                placeholderText: "/path/to/workspace.code-workspace"
+            }
+        }
     }
 
-    // ── File picker (uses native dialog via QML FileDialog) ───────────────
-    FolderDialog {
+    Dialog {
         id: workspacePicker
-        onAccepted: agentCtx.openWorkspaceFolder(decodeURIComponent(selectedFolder.toString().replace("file://", "")))
+        modal: true
+        title: "Open Workspace Folder"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: agentCtx.openWorkspaceFolder(workspaceFolderPathField.text.trim())
+
+        contentItem: ColumnLayout {
+            width: 420
+            spacing: 8
+
+            Label {
+                Layout.fillWidth: true
+                text: "Enter a workspace folder path."
+                wrapMode: Text.WordWrap
+                color: Theme.textMuted
+            }
+
+            TextField {
+                id: workspaceFolderPathField
+                Layout.fillWidth: true
+                placeholderText: "/path/to/workspace"
+            }
+        }
     }
 
     // ── State ─────────────────────────────────────────────────────────────
-    property bool sidebarVisible: appSettings.sidebarVisible
-    property real explorerWidth: appSettings.explorerWidth
-    property real agentWidth: appSettings.agentWidth
     property real splitterWidth: 8
     property real minExplorerWidth: 180
     property real minAgentWidth: 300

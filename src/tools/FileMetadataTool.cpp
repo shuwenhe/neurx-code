@@ -7,6 +7,8 @@
 #include <QDateTime>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonDocument>
 #include <QDebug>
 #include <QMimeDatabase>
 #include <QMimeType>

@@ -2,6 +2,7 @@
 #include <QDebug>
 #include <QDateTime>
 #include <QFile>
+#include <QJsonDocument>
 
 KnowledgebaseManager::KnowledgebaseManager(QObject* parent)
     : QObject(parent) {

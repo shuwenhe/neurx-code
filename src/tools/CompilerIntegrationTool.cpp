@@ -2,6 +2,7 @@
 #include <QProcess>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonDocument>
 #include <QFile>
 #include <QTextStream>
 #include <QRegularExpression>

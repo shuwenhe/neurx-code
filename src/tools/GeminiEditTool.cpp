@@ -8,6 +8,7 @@
 #include <QDebug>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonDocument>
 
 GeminiEditTool::GeminiEditTool(const QString &workspaceRoot, QObject *parent)
     : BaseTool(parent), m_workspaceRoot(workspaceRoot)

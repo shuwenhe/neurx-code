@@ -2,6 +2,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonDocument>
 
 QJsonObject GeminiHashTool::parametersSchema() const
 {

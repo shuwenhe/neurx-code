@@ -2,6 +2,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QDebug>
 
 CustomScriptTool::CustomScriptTool(const QString &name, const QString &description,

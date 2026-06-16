@@ -6,6 +6,7 @@
 #include <QTextStream>
 #include <QJsonDocument>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QDateTime>
 #include <QRegularExpression>
 

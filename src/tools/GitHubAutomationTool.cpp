@@ -1,6 +1,7 @@
 #include "GitHubAutomationTool.h"
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonDocument>
 #include <QProcess>
 #include <QDebug>
 #include <QDateTime>

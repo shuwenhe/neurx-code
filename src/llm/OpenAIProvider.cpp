@@ -36,8 +36,9 @@ static bool isVisionModel(const QString &model)
            m.contains(QStringLiteral("multimodal"));
 }
 
-// static constexpr char kBaseUrl[] = "https://api.siliconflow.cn/v1/chat/completions";
-static constexpr char kBaseUrl[] = "http://111.202.231.146:8080/neurx";
+// Default to the model-specific endpoint requested by the user.
+static constexpr char kBaseUrl[] = "http://111.202.231.146:8080/qwen2_5_vl_7b";
+static constexpr char kDefaultModel[] = "Qwen2.5-VL-7B";
 
 static QJsonObject parseToolArguments(const QString &rawArgs, const QString &callId)
 {
@@ -59,14 +60,7 @@ OpenAIProvider::OpenAIProvider(QObject *parent)
 
 QStringList OpenAIProvider::availableModels() const
 {
-    return {
-        "Qwen/Qwen3-8B",
-        "Qwen/Qwen3-32B",
-        "Qwen/Qwen3-235B-A22B",
-        "deepseek-ai/DeepSeek-V3",
-        "deepseek-ai/DeepSeek-R1",
-        "THUDM/glm-4-9b-chat",
-    };
+    return {kDefaultModel};
 }
 
 void OpenAIProvider::sendRequest(const LLMRequest &request)
@@ -80,7 +74,7 @@ void OpenAIProvider::sendRequest(const LLMRequest &request)
     }
 
     const QString endpoint = m_endpoint.isEmpty() ? QString::fromUtf8(kBaseUrl) : m_endpoint;
-    const QString model = request.model.isEmpty() ? availableModels().first() : request.model;
+    const QString model = request.model.isEmpty() ? QString::fromUtf8(kDefaultModel) : request.model;
     qInfo().noquote() << "[openai] sendRequest endpoint=" << endpoint
                       << "model=" << model;
 
@@ -142,7 +136,7 @@ void OpenAIProvider::cancel()
 
 QJsonObject OpenAIProvider::buildRequestBody(const LLMRequest &request) const
 {
-    const QString model = request.model.isEmpty() ? availableModels().first() : request.model;
+    const QString model = request.model.isEmpty() ? QString::fromUtf8(kDefaultModel) : request.model;
     QJsonObject body;
     body["model"]       = model;
     body["stream"]      = request.stream;

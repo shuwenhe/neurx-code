@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QDebug>
 #include <QCryptographicHash>
 

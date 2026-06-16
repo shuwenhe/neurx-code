@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonDocument>
 #include <QProcess>
 #include <QProcessEnvironment>
 

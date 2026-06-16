@@ -6,6 +6,7 @@
 #include <QRegularExpression>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonDocument>
 #include <QDebug>
 
 SecurityAnalysisTool::SecurityAnalysisTool(const QString &workspaceRoot, QObject *parent)

@@ -5,6 +5,7 @@
 #include <QDirIterator>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QDebug>
 
 PermissionsManagerTool::PermissionsManagerTool(const QString &workspaceRoot, QObject *parent)

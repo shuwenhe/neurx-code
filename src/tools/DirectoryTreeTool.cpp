@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QDebug>
 #include <QRegularExpression>
 

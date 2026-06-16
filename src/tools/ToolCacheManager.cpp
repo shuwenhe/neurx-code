@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonDocument>
 
 ToolCacheManager::ToolCacheManager(QObject *parent)
     : QObject(parent),

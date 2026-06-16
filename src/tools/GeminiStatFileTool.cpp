@@ -2,6 +2,7 @@
 #include <QFileInfo>
 #include <QJsonObject>
 #include <QJsonDocument>
+#include <QJsonDocument>
 
 GeminiStatFileTool::GeminiStatFileTool(QObject *parent) : BaseTool(parent) {}
 

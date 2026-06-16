@@ -1,7 +1,6 @@
 import QtQuick 6.2
 import QtQuick.Controls 6.2
 import QtQuick.Layouts 6.2
-import QtCore
 import NeurXCode
 
 // ── FileTreePanel ─────────────────────────────────────────────────────────────
@@ -31,16 +30,11 @@ Item {
 
     // Root path for the disk browser (navigable by the user).
     property string diskRoot: "/"
-
-    Settings {
-        id: treeSettings
-        property string expandedPathsByWorkspaceJson: "{}"
-        property string diskRoot: "/"
-    }
+    property string expandedPathsByWorkspaceJson: "{}"
 
     function expandedPathsByWorkspace() {
         try {
-            return JSON.parse(treeSettings.expandedPathsByWorkspaceJson || "{}")
+            return JSON.parse(root.expandedPathsByWorkspaceJson || "{}")
         } catch (e) {
             return {}
         }
@@ -65,7 +59,7 @@ Item {
         const workspace = root.agent.workspacePath || ""
         const byWorkspace = expandedPathsByWorkspace()
         byWorkspace[workspace] = Object.keys(expandedPaths)
-        treeSettings.expandedPathsByWorkspaceJson = JSON.stringify(byWorkspace)
+        root.expandedPathsByWorkspaceJson = JSON.stringify(byWorkspace)
     }
 
     function restoreExpandedPaths() {
@@ -435,10 +429,10 @@ Item {
         // If no workspace is set, avoid defaulting to the user's home directory
         // which previously caused the explorer to stay stuck on `/home`.
         if (root.agent && root.agent.workspacePath) {
-            root.diskRoot = root.agent.workspacePath || (treeSettings.diskRoot || "/")
+            root.diskRoot = root.agent.workspacePath || root.diskRoot || "/"
         } else {
             // If the saved diskRoot points to a home directory, prefer the filesystem root instead
-            const saved = treeSettings.diskRoot || "/"
+            const saved = root.diskRoot || "/"
             if (saved.startsWith("/home/") || saved === "/home")
                 root.diskRoot = "/"
             else
@@ -450,7 +444,6 @@ Item {
     }
 
     onDiskRootChanged: {
-        treeSettings.diskRoot = root.diskRoot
     }
 
     Rectangle {

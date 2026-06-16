@@ -1,6 +1,7 @@
 #include "tools/SkillTool.h"
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonDocument>
 
 SkillTool::SkillTool(ClaudeSkillManager *manager, QObject *parent)
     : BaseTool(parent), m_manager(manager)

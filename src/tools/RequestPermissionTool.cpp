@@ -1,6 +1,7 @@
 #include "RequestPermissionTool.h"
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
 
 RequestPermissionTool::RequestPermissionTool(QObject *parent)
     : BaseTool(parent)

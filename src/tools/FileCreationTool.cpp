@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QProcess>
 #include <QTemporaryFile>
 #include <QDateTime>

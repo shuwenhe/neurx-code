@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
 
 ToolChainManager::ToolChainManager(QObject *parent)
     : QObject(parent) {

@@ -1,6 +1,7 @@
 #include "GeminiWriteTodosTool.h"
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonDocument>
 
 GeminiWriteTodosTool::GeminiWriteTodosTool(QObject *parent) : BaseTool(parent)
 {

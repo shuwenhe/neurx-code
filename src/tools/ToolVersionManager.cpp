@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QCryptographicHash>
 #include <algorithm>
 #include <QRegularExpression>

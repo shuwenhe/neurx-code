@@ -2,6 +2,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QDebug>
 
 CodePerceptionTool::CodePerceptionTool(const QString& workspaceRoot, QObject* parent)

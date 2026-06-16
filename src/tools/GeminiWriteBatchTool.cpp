@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QSaveFile>
 
 QJsonObject GeminiWriteBatchTool::parametersSchema() const {

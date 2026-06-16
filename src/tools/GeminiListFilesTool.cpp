@@ -3,6 +3,7 @@
 #include <QFileInfoList>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonDocument>
 
 GeminiListFilesTool::GeminiListFilesTool(QObject *parent) : BaseTool(parent) {}
 

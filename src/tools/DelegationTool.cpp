@@ -2,6 +2,7 @@
 #include <QEventLoop>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonDocument>
 #include <QDebug>
 
 DelegationTool::DelegationTool(AgentToolRegistry *registry, LLMProvider *provider,

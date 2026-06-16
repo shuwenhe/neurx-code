@@ -3,6 +3,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QDebug>
 
 TextProcessingTool::TextProcessingTool(const QString &workspaceRoot, QObject *parent)
@@ -184,7 +185,7 @@ QString TextProcessingTool::toSnakeCase(const QString &str)
         if (ch.isUpper() && i > 0) {
             result += "_";
             result += ch.toLower();
-        } else if (ch == "-" || ch == " ") {
+        } else if (ch == QLatin1Char('-') || ch == QLatin1Char(' ')) {
             result += "_";
         } else {
             result += ch.toLower();
@@ -228,7 +229,7 @@ QString TextProcessingTool::toKebabCase(const QString &str)
         if (ch.isUpper() && i > 0) {
             result += "-";
             result += ch.toLower();
-        } else if (ch == "_" || ch == " ") {
+        } else if (ch == '_' || ch == ' ') {
             result += "-";
         } else {
             result += ch.toLower();

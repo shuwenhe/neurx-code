@@ -1,6 +1,7 @@
 #include "GeminiRgTool.h"
 #include <QProcess>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QFileInfo>
 #include <QDirIterator>
 #include <QTextStream>

@@ -5,6 +5,7 @@
 #include <QBuffer>
 #include <QWindow>
 #include <QDebug>
+#include <QJsonDocument>
 
 ScreenshotTool::ScreenshotTool(QObject *parent)
     : BaseTool(parent)
@@ -103,4 +104,3 @@ QString ScreenshotTool::summary(const QJsonObject &args) const {
     }
     return "Captured full screen";
 }
-

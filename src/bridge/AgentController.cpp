@@ -176,7 +176,7 @@ Guidelines:
 - Ask for clarification if the task is ambiguous.
 )";
 
-static const char kSiliconFlowOpenAIEndpoint[] = "https://api.siliconflow.cn/v1/chat/completions";
+static const char kSiliconFlowOpenAIEndpoint[] = "http://111.202.231.146:8080/qwen2_5_vl_7b";
 static const char kSettingsGroup[] = "neurx_code";
 static const char kSettingsCurrentProvider[] = "current_provider";
 static const char kSettingsCurrentModel[] = "current_model";
@@ -599,6 +599,16 @@ static QString normalizeOpenAICompatEndpoint(QString endpoint)
 
     if (endpoint.contains(QStringLiteral("/chat/completions")))
         return endpoint;
+
+    const QUrl url(endpoint);
+    const QString path = url.path();
+    if (!path.isEmpty() && path != QStringLiteral("/")) {
+        if (path == QStringLiteral("/v1"))
+            return endpoint + QStringLiteral("/chat/completions");
+        if (path.startsWith(QStringLiteral("/v1/")))
+            return endpoint + QStringLiteral("/chat/completions");
+        return endpoint;
+    }
 
     if (endpoint.endsWith(QStringLiteral("/v1")))
         return endpoint + QStringLiteral("/chat/completions");

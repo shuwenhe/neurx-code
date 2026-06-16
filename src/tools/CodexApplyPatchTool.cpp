@@ -7,6 +7,7 @@
 #include <QTextStream>
 #include <QJsonDocument>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QRegularExpression>
 #include <QDebug>
 #include <QTemporaryFile>

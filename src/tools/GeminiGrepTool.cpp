@@ -3,6 +3,7 @@
 #include <QTextStream>
 #include <QDirIterator>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QRegularExpression>
 #include <QJsonDocument>
 #include <QProcess>

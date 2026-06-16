@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonDocument>
 #include <QSaveFile>
 #include <QCryptographicHash>
 #include <QFileDevice>

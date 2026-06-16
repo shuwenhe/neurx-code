@@ -2,6 +2,7 @@
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <algorithm>

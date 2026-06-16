@@ -2,6 +2,7 @@
 #include "sandbox/SandboxManager.h"
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonDocument>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>

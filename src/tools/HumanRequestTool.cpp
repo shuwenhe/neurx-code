@@ -1,6 +1,7 @@
 #include "HumanRequestTool.h"
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
 
 HumanRequestTool::HumanRequestTool(QObject *parent)
     : BaseTool(parent)
