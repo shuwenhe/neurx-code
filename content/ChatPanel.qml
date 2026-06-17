@@ -97,29 +97,33 @@ Item {
 
                 onCountChanged: {
                     if (root.autoFollowLatest) {
-                        Qt.callLater(() => {
-                            root.scrollToBottom()
-                        })
+                        root.scrollToBottom()
                     }
                 }
                 onContentHeightChanged: {
                     // Always scroll to bottom when content changes and autoFollowLatest is true
                     if (root.autoFollowLatest && !root.autoScrollingList) {
-                        Qt.callLater(() => {
-                            root.scrollToBottom()
-                        })
+                        root.scrollToBottom()
                     }
                 }
                 onMovementEnded: {
                     if (root.autoScrollingList)
                         return
                     
+                    // 如果我们刚完成自动滚动（scrollRetryCount 仍 > 0），不要改变 autoFollowLatest
+                    if (root.scrollRetryCount > 0)
+                        return
+                    
                     // 记录用户手动滚动的时间
                     root.lastManualScrollTime = Date.now()
                     
-                    // 改进的底部检测
+                    // 改进的底部检测：只有当用户明确滚动到非底部位置时才禁用自动跟随
+                    // 保持 autoFollowLatest 为 true（因为消息应该继续自动滚动到最新）
                     const isAtBottom = root.isListViewAtBottom()
-                    root.autoFollowLatest = isAtBottom
+                    if (!isAtBottom && (listView.contentHeight > listView.height)) {
+                        // 用户明确滚动到非底部，禁用自动跟随
+                        root.autoFollowLatest = false
+                    }
                 }
 
                 onContentYChanged: {
@@ -880,41 +884,34 @@ Item {
     }
 
     function scrollToBottom() {
+        if (!listView)
+            return
+
         root.autoScrollingList = true
         root.scrollRetryCount = 0
-        
-        function performScroll() {
-            if (!listView) {
-                root.autoScrollingList = false
-                return
-            }
-            
-            // 强制布局更新以确保所有消息气泡已渲染
-            if (typeof listView.forceLayout === 'function') {
-                listView.forceLayout()
-            }
-            
-            // 滚动到列表末尾
-            listView.positionViewAtEnd()
-            
-            root.scrollRetryCount++
-            
-            // 如果还没有达到最大重试次数，计划下一次滚动
-            if (root.scrollRetryCount < root.maxScrollRetries) {
-                // 使用递增的延迟: 50ms, 100ms, 150ms
-                const delayMs = 50 * root.scrollRetryCount
-                Qt.callLater(() => {
-                    performScroll()
-                }, delayMs)
-            } else {
-                // 完成所有重试后，恢复自动滚动标志
-                Qt.callLater(() => {
-                    root.autoScrollingList = false
-                }, 100)
-            }
+        performScrollStep()
+    }
+
+    function performScrollStep() {
+        if (!listView) {
+            root.autoScrollingList = false
+            return
         }
-        
-        Qt.callLater(performScroll)
+
+        // Force layout so the latest bubble/footer height is settled before scrolling.
+        if (typeof listView.forceLayout === 'function')
+            listView.forceLayout()
+
+        listView.positionViewAtEnd()
+
+        if (root.scrollRetryCount < root.maxScrollRetries - 1) {
+            root.scrollRetryCount += 1
+            scrollRetryTimer.restart()
+        } else {
+            root.autoScrollingList = false
+            // 确保 autoFollowLatest 保持 true 以便后续新消息继续自动滚动
+            root.autoFollowLatest = true
+        }
     }
 
     function isListViewAtBottom() {
@@ -973,5 +970,12 @@ Item {
     onStreamingTextChanged: {
         if (root.autoFollowLatest && (root.busy || root.streamingText.length > 0))
             root.scrollToBottom()
+    }
+
+    Timer {
+        id: scrollRetryTimer
+        interval: 50
+        repeat: false
+        onTriggered: root.performScrollStep()
     }
 }
