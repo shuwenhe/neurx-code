@@ -6731,27 +6731,23 @@ void AgentController::onTokenReceived(const TokenEvent &ev)
             m_streamingAssistantActive = true;
         }
         
-        // OPTIMIZATION: Buffer tokens instead of emitting signal on every token
+        // Buffer tokens and batch UI updates to avoid re-laying out the
+        // assistant bubble on every single token.
         m_streamingTextBuffer += ev.delta;
         m_tokenBufferSize++;
-        m_chatModel->updateLastContent(ev.delta);
         
-        // Start/restart the batching timer if not already running
+        // Start the batching timer if not already running.
         if (!m_streamingTextUpdateTimer->isActive()) {
-            // For first tokens or after long pause, emit immediately for responsiveness
-            if (m_tokenBufferSize >= kStreamingTextBatchSize) {
-                m_streamingTextUpdateTimer->start();
-            } else {
-                m_streamingTextUpdateTimer->start();
-            }
+            m_streamingTextUpdateTimer->start();
         }
     }
 }
 
 void AgentController::flushStreamingTextBuffer()
 {
-    // Process all buffered tokens and emit signal once
+    // Apply all buffered tokens in one UI update.
     if (m_tokenBufferSize > 0) {
+        m_chatModel->updateLastContent(m_streamingTextBuffer);
         m_streamingText += m_streamingTextBuffer;
         m_streamingTextBuffer.clear();
         m_tokenBufferSize = 0;
