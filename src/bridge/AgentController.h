@@ -562,6 +562,7 @@ private:
     void refreshSystemPrompt();
     void setBusy(bool b);
     void onTokenReceived(const TokenEvent &ev);
+    void flushStreamingTextBuffer();  // Process batched tokens and emit signal
     void onMessageAdded(const AgentMessage &msg);
     void onToolExecuting(const ToolCall &call);
     void onToolFinished(const ToolResult &result);
@@ -619,6 +620,12 @@ private:
     bool     m_busy{false};
     bool     m_engineSignalsConnected{false};
     QString  m_streamingText;
+    QString  m_streamingTextBuffer;              // Buffer for batched tokens
+    QTimer*  m_streamingTextUpdateTimer{nullptr}; // Timer for batched updates
+    int      m_tokenBufferSize{0};                // Current buffer size
+    static constexpr int kStreamingTextBatchInterval = 50;  // ms between updates
+    static constexpr int kStreamingTextBatchSize = 10;      // min tokens to batch
+    
     bool     m_streamingAssistantActive{false};
     bool     m_restoringSessionHistory{false};
     QString  m_sessionId;

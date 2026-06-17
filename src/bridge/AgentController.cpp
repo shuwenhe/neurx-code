@@ -2442,6 +2442,13 @@ AgentController::AgentController(QObject *parent) : QObject(parent)
     m_sessionId = TaskSessionStore::defaultSessionId();
     m_threadCreatedAt = QDateTime::currentDateTimeUtc();
 
+    // Initialize streaming text batching timer
+    m_streamingTextUpdateTimer = new QTimer(this);
+    m_streamingTextUpdateTimer->setInterval(kStreamingTextBatchInterval);
+    m_streamingTextUpdateTimer->setSingleShot(true);
+    connect(m_streamingTextUpdateTimer, &QTimer::timeout,
+            this, &AgentController::flushStreamingTextBuffer);
+
     loadSettings();
     configurePolicyManagers();
     setupEngine();
@@ -4052,6 +4059,9 @@ void AgentController::rebuildChatModelFromHistory()
 {
     m_chatModel->clear();
     m_streamingText.clear();
+    m_streamingTextBuffer.clear();
+    m_tokenBufferSize = 0;
+    if (m_streamingTextUpdateTimer) m_streamingTextUpdateTimer->stop();
     m_streamingAssistantActive = false;
     m_restoringSessionHistory = true;
 
@@ -6477,6 +6487,9 @@ void AgentController::submitToAgent(const QString &text, const QVariantList &att
         : text;
     qInfo().noquote() << "[agent] user message:" << logPreview(text);
     m_streamingText.clear();
+    m_streamingTextBuffer.clear();
+    m_tokenBufferSize = 0;
+    if (m_streamingTextUpdateTimer) m_streamingTextUpdateTimer->stop();
     m_streamingAssistantActive = false;
     appendSessionStoreMessage(QStringLiteral("user"), sessionText);
 
@@ -6629,6 +6642,9 @@ void AgentController::clearHistory()
     updateCodeMagicResult(QVariantMap{}, QString{});
     m_streamingAssistantActive = false;
     m_streamingText.clear();
+    m_streamingTextBuffer.clear();
+    m_tokenBufferSize = 0;
+    if (m_streamingTextUpdateTimer) m_streamingTextUpdateTimer->stop();
     m_sessionId = TaskSessionStore::defaultSessionId();
     m_parentThreadId.clear();
     m_threadCreatedAt = QDateTime::currentDateTimeUtc();
@@ -6714,9 +6730,32 @@ void AgentController::onTokenReceived(const TokenEvent &ev)
             m_chatModel->append(cm);
             m_streamingAssistantActive = true;
         }
-        m_streamingText += ev.delta;
-        emit streamingTextChanged();
+        
+        // OPTIMIZATION: Buffer tokens instead of emitting signal on every token
+        m_streamingTextBuffer += ev.delta;
+        m_tokenBufferSize++;
         m_chatModel->updateLastContent(ev.delta);
+        
+        // Start/restart the batching timer if not already running
+        if (!m_streamingTextUpdateTimer->isActive()) {
+            // For first tokens or after long pause, emit immediately for responsiveness
+            if (m_tokenBufferSize >= kStreamingTextBatchSize) {
+                m_streamingTextUpdateTimer->start();
+            } else {
+                m_streamingTextUpdateTimer->start();
+            }
+        }
+    }
+}
+
+void AgentController::flushStreamingTextBuffer()
+{
+    // Process all buffered tokens and emit signal once
+    if (m_tokenBufferSize > 0) {
+        m_streamingText += m_streamingTextBuffer;
+        m_streamingTextBuffer.clear();
+        m_tokenBufferSize = 0;
+        emit streamingTextChanged();
     }
 }
 
@@ -6731,6 +6770,8 @@ void AgentController::onMessageAdded(const AgentMessage &msg)
         break;
     case MessageRole::Assistant:
         appendSessionStoreMessage(QStringLiteral("assistant"), msg.content);
+        // Flush any remaining buffered tokens when assistant message is added
+        flushStreamingTextBuffer();
         break;
     case MessageRole::Tool:
         appendSessionStoreMessage(QStringLiteral("tool"), msg.content);

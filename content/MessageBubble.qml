@@ -14,6 +14,7 @@ Item {
     required property string     messageContent
     required property var        messageToolCalls   // list of {id, name, status, args, result}
     required property var        messageAttachments // list of QVariantMap image attachments
+    required property bool       isStreaming
 
     implicitHeight: bodyColumn.implicitHeight + 16
 
@@ -31,7 +32,7 @@ Item {
             || messageContent.indexOf("Rolled back workspace files") === 0)
     property bool toolsExpanded: false
     readonly property real roleLabelHeight: root.isAssistant ? 0 : roleLabel.implicitHeight
-    readonly property var contentBlocks: root.isAssistant ? parseBlocks(root.messageContent) : []
+    readonly property var contentBlocks: (root.isAssistant && !root.isStreaming) ? parseBlocks(root.messageContent) : []
     readonly property var attachments: root.messageAttachments || []
     readonly property color badgeColor: {
         if (isUser)
@@ -238,7 +239,7 @@ Item {
 
                     TextEdit {
                         width: parent.width
-                        visible: !root.isAssistant
+                        visible: !root.isAssistant || root.isStreaming
                         text: root.messageContent
                         wrapMode: TextEdit.Wrap
                         color: root.isUser ? "white" : root.isCheckpointNotice ? Theme.textPrimary : Theme.textPrimary
@@ -304,7 +305,7 @@ Item {
                     }
 
                     Repeater {
-                        model: root.isAssistant ? root.contentBlocks : []
+                        model: root.contentBlocks
 
                         delegate: Loader {
                             required property var modelData

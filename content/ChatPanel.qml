@@ -142,6 +142,7 @@ Item {
                     required property string content
                     required property var toolCalls
                     required property var attachments
+                    readonly property bool isStreamingAssistant: root.busy && index === listView.count - 1 && role === "assistant"
 
                     width: listView.width
                     implicitHeight: bubble.implicitHeight
@@ -153,6 +154,7 @@ Item {
                         messageContent: parent.content
                         messageToolCalls: parent.toolCalls
                         messageAttachments: parent.attachments
+                        isStreaming: parent.isStreamingAssistant
                     }
                 }
 
