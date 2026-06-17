@@ -6570,6 +6570,40 @@ void AgentController::rejectTool(const QString &callId)
     m_engine->approveTool(callId, false);
 }
 
+QVariantList AgentController::listDirectoryContents(const QString &path)
+{
+    QVariantList result;
+    
+    // Normalize and validate path
+    QDir dir(path.isEmpty() ? m_workspacePath : path);
+    if (!dir.exists()) {
+        qWarning() << "[listDirectoryContents] Directory does not exist:" << path;
+        return result;
+    }
+    
+    // Security check: ensure path is within workspace
+    const QString absolutePath = dir.absolutePath();
+    const QString workspacePath = QDir(m_workspacePath).absolutePath();
+    if (!absolutePath.startsWith(workspacePath) && absolutePath != workspacePath) {
+        qWarning() << "[listDirectoryContents] Path outside workspace:" << absolutePath;
+        return result;
+    }
+    
+    // Get files and directories
+    const QFileInfoList entries = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &info : entries) {
+        QVariantMap item;
+        item[QStringLiteral("name")] = info.fileName();
+        item[QStringLiteral("path")] = info.absoluteFilePath();
+        item[QStringLiteral("isDirectory")] = info.isDir();
+        item[QStringLiteral("size")] = static_cast<qint64>(info.size());
+        item[QStringLiteral("isSymLink")] = info.isSymLink();
+        result.append(item);
+    }
+    
+    return result;
+}
+
 void AgentController::onTokenReceived(const TokenEvent &ev)
 {
     if (ev.type == TokenEvent::Type::TextDelta) {

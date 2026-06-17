@@ -29,7 +29,7 @@ Item {
     property bool deleteDialogVisible: deleteDialog.visible
 
     // Root path for the disk browser (navigable by the user).
-    property string diskRoot: "/"
+    property string diskRoot: agent && agent.workspacePath ? agent.workspacePath : "/"
     property string expandedPathsByWorkspaceJson: "{}"
 
     function expandedPathsByWorkspace() {

@@ -447,6 +447,9 @@ public slots:
     void approveTool(const QString &callId);
     void rejectTool(const QString &callId);
 
+    // File System Access
+    Q_INVOKABLE QVariantList listDirectoryContents(const QString &path);
+
 signals:
     void currentProviderChanged();
     void currentModelChanged();
