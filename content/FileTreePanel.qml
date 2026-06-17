@@ -414,6 +414,10 @@ Item {
             root.revealCurrentFile()
         }
         function onWorkspacePathChanged() {
+            // Update diskRoot to the new workspace path
+            if (root.agent.workspacePath) {
+                root.diskRoot = root.agent.workspacePath
+            }
             root.restoreExpandedPaths()
             root.updateSearchExpansion()
             root.revealCurrentFile()
@@ -429,7 +433,7 @@ Item {
         // If no workspace is set, avoid defaulting to the user's home directory
         // which previously caused the explorer to stay stuck on `/home`.
         if (root.agent && root.agent.workspacePath) {
-            root.diskRoot = root.agent.workspacePath || root.diskRoot || "/"
+            root.diskRoot = root.agent.workspacePath
         } else {
             // If the saved diskRoot points to a home directory, prefer the filesystem root instead
             const saved = root.diskRoot || "/"
