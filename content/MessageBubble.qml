@@ -158,6 +158,76 @@ Item {
                 border.width: root.isUser ? 0 : 1
                 implicitHeight: bubbleContent.implicitHeight + 24
 
+                property bool hovered: false
+                property bool copied: false
+
+                // Global Copy Button for Assistant Messages
+                Rectangle {
+                    id: globalCopyButton
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.margins: 6
+                    width: 24
+                    height: 24
+                    radius: 4
+                    color: bubble.copied ? Theme.success : (copyMouse.containsMouse ? Theme.surfaceAlt : "transparent")
+                    visible: root.isAssistant && (bubble.hovered || bubble.copied)
+                    border.color: Theme.border
+                    border.width: copyMouse.containsMouse ? 1 : 0
+                    z: 10
+
+                    Label {
+                        anchors.centerIn: parent
+                        text: bubble.copied ? "✓" : "⎘"
+                        color: bubble.copied ? "white" : Theme.textPrimary
+                        font.pixelSize: 14
+                    }
+
+                    MouseArea {
+                        id: copyMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            // Copying the full content
+                            // We can use a hidden TextEdit if needed, but since we have the property
+                            // we'll try to find a way to copy the string directly.
+                            // In this project, they seem to use TextEdit.copy()
+                            clipboardHelper.text = root.messageContent
+                            clipboardHelper.selectAll()
+                            clipboardHelper.copy()
+                            clipboardHelper.deselect()
+
+                            bubble.copied = true
+                            copyTimer.restart()
+                        }
+                    }
+
+                    ToolTip.visible: copyMouse.containsMouse
+                    ToolTip.text: bubble.copied ? "Copied!" : "Copy message"
+
+                    Timer {
+                        id: copyTimer
+                        interval: 2000
+                        onTriggered: bubble.copied = false
+                    }
+                }
+
+                // Hidden TextEdit for copying
+                TextEdit {
+                    id: clipboardHelper
+                    visible: false
+                    text: ""
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    acceptedButtons: Qt.NoButton
+                    onEntered: bubble.hovered = true
+                    onExited: bubble.hovered = false
+                }
+
                 Column {
                     id: bubbleContent
                     anchors.left: parent.left
@@ -319,14 +389,24 @@ Item {
     Component {
         id: markdownBlock
 
-        Text {
+        TextEdit {
             text: blockText
-            textFormat: Text.MarkdownText
-            wrapMode: Text.Wrap
+            textFormat: TextEdit.MarkdownText
+            wrapMode: TextEdit.Wrap
             color: Theme.textPrimary
             font: Theme.uiFont
             width: root.isAssistant ? root.wideContentWidth - 24 : root.contentWidth - 24
             visible: text.trim().length > 0
+            readOnly: true
+            selectByMouse: true
+            activeFocusOnPress: false
+
+            // Prevent TextEdit from stealing wheel events from the parent ListView
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.NoButton
+                onWheel: (wheel) => { wheel.accepted = false }
+            }
         }
     }
 

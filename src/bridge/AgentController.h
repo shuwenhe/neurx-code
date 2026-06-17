@@ -435,6 +435,7 @@ public slots:
     bool renameWorkspacePath(const QString &path, const QString &newName);
     bool deleteWorkspacePath(const QString &path);
     bool moveWorkspacePath(const QString &path, const QString &destinationDir);
+    bool copyWorkspacePath(const QString &path, const QString &destinationDir);
     Q_INVOKABLE bool undoLastWorkspaceAction();
     Q_INVOKABLE bool rollbackCheckpoint(const QString &checkpointId);
     void saveCurrentFile();

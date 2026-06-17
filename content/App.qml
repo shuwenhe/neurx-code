@@ -237,7 +237,12 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         agent: root.agentCtx
                         visible: root.sidebarVisible
-                        onFileClicked: path => root.agentCtx.openEditorFile(path)
+                        onFileClicked: path => {
+                            root.agentCtx.openEditorFile(path)
+                            if (typeof editorPanel !== "undefined") {
+                                editorPanel.goToLine(1)
+                            }
+                        }
                         onFindInFolderRequested: path => {
                             agentTabs.currentIndex = 1
                             searchPanel.searchPath = path

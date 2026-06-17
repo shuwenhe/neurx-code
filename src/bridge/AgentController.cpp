@@ -6041,6 +6041,46 @@ bool AgentController::deleteWorkspacePath(const QString &path)
     return true;
 }
 
+static bool copyWorkspacePathRecursive(const QString &sourcePath, const QString &destinationPath)
+{
+    const QFileInfo sourceInfo(sourcePath);
+    if (!sourceInfo.exists())
+        return false;
+
+    if (sourceInfo.isDir()) {
+        QDir destinationDir(destinationPath);
+        if (!destinationDir.exists()) {
+            if (!QDir().mkpath(destinationPath))
+                return false;
+        }
+
+        const QDir sourceDir(sourcePath);
+        const QFileInfoList entries = sourceDir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot, QDir::Name);
+        for (const QFileInfo &entry : entries) {
+            const QString childSource = entry.absoluteFilePath();
+            const QString childDestination = destinationDir.filePath(entry.fileName());
+            if (entry.isDir()) {
+                if (!copyWorkspacePathRecursive(childSource, childDestination))
+                    return false;
+            } else {
+                QFile::remove(childDestination);
+                if (!QFile::copy(childSource, childDestination))
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    QDir parentDir = QFileInfo(destinationPath).dir();
+    if (!parentDir.exists()) {
+        if (!QDir().mkpath(parentDir.absolutePath()))
+            return false;
+    }
+
+    QFile::remove(destinationPath);
+    return QFile::copy(sourcePath, destinationPath);
+}
+
 bool AgentController::moveWorkspacePath(const QString &path, const QString &destinationDir)
 {
     if (m_workspacePath.isEmpty())
@@ -6064,6 +6104,14 @@ bool AgentController::moveWorkspacePath(const QString &path, const QString &dest
     if (!destDir.exists()) {
         emit errorOccurred(QStringLiteral("Destination directory does not exist."));
         return false;
+    }
+
+    if (info.isDir()) {
+        const QString destinationPrefix = absDestinationDir.endsWith('/') ? absDestinationDir : absDestinationDir + '/';
+        if (absDestinationDir == absPath || absDestinationDir.startsWith(absPath + "/") || destinationPrefix.startsWith(absPath + "/")) {
+            emit errorOccurred(QStringLiteral("Cannot move a folder into itself."));
+            return false;
+        }
     }
 
     const QString newAbsPath = destDir.filePath(info.fileName());
@@ -6105,6 +6153,59 @@ bool AgentController::moveWorkspacePath(const QString &path, const QString &dest
     m_lastWorkspaceActionSource = absPath;
     m_lastWorkspaceActionDestination = newAbsPath;
     emit undoWorkspaceActionChanged();
+    saveSettings();
+    refreshSystemPrompt();
+    saveTaskSession();
+    return true;
+}
+
+bool AgentController::copyWorkspacePath(const QString &path, const QString &destinationDir)
+{
+    if (m_workspacePath.isEmpty())
+        return false;
+
+    const QString absPath = normalizeWorkspaceComparablePath(path);
+    const QString absDestinationDir = normalizeWorkspaceComparablePath(destinationDir);
+    if (!isPathInsideWorkspace(absPath, m_workspacePath)
+        || !isPathInsideWorkspace(absDestinationDir, m_workspacePath)) {
+        emit errorOccurred(QStringLiteral("Path is outside the workspace."));
+        return false;
+    }
+
+    QFileInfo info(absPath);
+    if (!info.exists()) {
+        emit errorOccurred(QStringLiteral("Path does not exist."));
+        return false;
+    }
+
+    QDir destDir(absDestinationDir);
+    if (!destDir.exists()) {
+        emit errorOccurred(QStringLiteral("Destination directory does not exist."));
+        return false;
+    }
+
+    const QString newAbsPath = destDir.filePath(info.fileName());
+    if (newAbsPath == absPath)
+        return true;
+    if (QFileInfo::exists(newAbsPath)) {
+        emit errorOccurred(QStringLiteral("Target already exists."));
+        return false;
+    }
+
+    if (info.isDir() && (absDestinationDir == absPath || absDestinationDir.startsWith(absPath + "/"))) {
+        emit errorOccurred(QStringLiteral("Cannot copy a folder into itself."));
+        return false;
+    }
+
+    const bool ok = copyWorkspacePathRecursive(absPath, newAbsPath);
+    if (!ok) {
+        emit errorOccurred(QStringLiteral("Failed to copy path."));
+        return false;
+    }
+
+    if (m_workspaceIndex)
+        m_workspaceIndex->refresh();
+
     saveSettings();
     refreshSystemPrompt();
     saveTaskSession();

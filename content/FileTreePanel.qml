@@ -4,10 +4,12 @@ import QtQuick.Layouts 6.2
 import NeurXCode
 
 // ── FileTreePanel ─────────────────────────────────────────────────────────────
-//  Left sidebar with a directory listing for the open workspace.
+//  Explorer sidebar with VS Code-style folder expansion, search filtering,
+//  and workspace file actions.
 
 Item {
     id: root
+    focus: true
 
     required property var agent
 
@@ -25,11 +27,16 @@ Item {
     property string pendingName: ""
     property string pendingDeletePath: ""
     property string pendingDeleteName: ""
+    property string clipboardPath: ""
+    property string clipboardMode: ""
+    property string dropTargetPath: ""
+    property string selectedPath: ""
+    property var visibleTreeEntries: []
     property bool entryDialogVisible: entryDialog.visible
     property bool deleteDialogVisible: deleteDialog.visible
 
-    // Root path for the disk browser (navigable by the user).
-    property string diskRoot: agent && agent.workspacePath ? agent.workspacePath : "/"
+    // Root path for the browser.
+    property string diskRoot: ""
     property string expandedPathsByWorkspaceJson: "{}"
 
     function expandedPathsByWorkspace() {
@@ -48,22 +55,20 @@ Item {
             text = decodeURIComponent(text)
         } catch (e) {
         }
-        // FolderListModel.filePath is typically a file:// URL.
-        // Strip the URL scheme while preserving the leading '/' in absolute paths.
         if (text.startsWith("file://"))
             text = text.slice(7)
         return text.replace(/\\/g, "/")
     }
 
     function saveExpandedPaths() {
-        const workspace = root.agent.workspacePath || ""
+        const workspace = root.agent && root.agent.workspacePath ? root.agent.workspacePath : ""
         const byWorkspace = expandedPathsByWorkspace()
         byWorkspace[workspace] = Object.keys(expandedPaths)
         root.expandedPathsByWorkspaceJson = JSON.stringify(byWorkspace)
     }
 
     function restoreExpandedPaths() {
-        const workspace = root.agent.workspacePath || ""
+        const workspace = root.agent && root.agent.workspacePath ? root.agent.workspacePath : ""
         const byWorkspace = expandedPathsByWorkspace()
         const saved = byWorkspace[workspace] || []
         const next = {}
@@ -83,39 +88,27 @@ Item {
         else
             delete next[path]
         expandedPaths = next
-        root.saveExpandedPaths()
+        saveExpandedPaths()
+        refreshVisibleTree()
     }
 
     function clearExpandedPaths() {
         expandedPaths = ({})
-        root.saveExpandedPaths()
+        saveExpandedPaths()
+        refreshVisibleTree()
     }
 
     function isSearchExpanded(path) {
         return !!searchExpandedPaths[path]
     }
 
-    function hasSearchDescendant(path) {
-        const query = root.filterText.trim()
-        if (!query)
-            return true
-        const matches = root.searchMatches || []
-        const prefix = path.endsWith("/") ? path : path + "/"
-        for (let i = 0; i < matches.length; ++i) {
-            const candidate = matches[i]
-            if (candidate === path || candidate.startsWith(prefix))
-                return true
-        }
-        return false
-    }
-
     function currentDirForPath(path) {
         path = normalizedPath(path)
         if (!path)
-            return root.agent.workspacePath || ""
+            return root.agent && root.agent.workspacePath ? root.agent.workspacePath : ""
         const idx = path.lastIndexOf("/")
         if (idx <= 0)
-            return root.agent.workspacePath || ""
+            return root.agent && root.agent.workspacePath ? root.agent.workspacePath : ""
         return path.slice(0, idx)
     }
 
@@ -127,9 +120,221 @@ Item {
         return parts[parts.length - 1]
     }
 
+    function hasClipboardItem() {
+        return !!clipboardPath
+    }
+
+    function selectPath(path) {
+        selectedPath = normalizedPath(path)
+        if (selectedPath)
+            Qt.callLater(() => scrollPathIntoView(selectedPath))
+    }
+
+    function isVisiblePath(path) {
+        const normalized = normalizedPath(path)
+        for (let i = 0; i < visibleTreeEntries.length; ++i) {
+            if (visibleTreeEntries[i].path === normalized)
+                return true
+        }
+        return false
+    }
+
+    function visibleIndexForPath(path) {
+        const normalized = normalizedPath(path)
+        for (let i = 0; i < visibleTreeEntries.length; ++i) {
+            if (visibleTreeEntries[i].path === normalized)
+                return i
+        }
+        return -1
+    }
+
+    function visibleEntryAt(index) {
+        if (index < 0 || index >= visibleTreeEntries.length)
+            return null
+        return visibleTreeEntries[index]
+    }
+
+    function currentVisibleEntry() {
+        let entry = visibleEntryAt(visibleIndexForPath(selectedPath))
+        if (!entry)
+            entry = visibleEntryAt(visibleIndexForPath(root.agent ? root.agent.currentFilePath : ""))
+        if (!entry)
+            entry = visibleEntryAt(0)
+        return entry
+    }
+
+    function ensureSelection() {
+        if (selectedPath && isVisiblePath(selectedPath))
+            return
+
+        const currentEntry = currentVisibleEntry()
+        if (currentEntry) {
+            selectedPath = currentEntry.path
+        } else if (!selectedPath) {
+            selectedPath = normalizedPath(root.diskRoot)
+        }
+    }
+
+    function setSelectionByIndex(index) {
+        const entry = visibleEntryAt(index)
+        if (!entry)
+            return
+        selectPath(entry.path)
+    }
+
+    function setSelectionByPath(path) {
+        const normalized = normalizedPath(path)
+        if (!normalized)
+            return
+        selectedPath = normalized
+        Qt.callLater(() => scrollPathIntoView(normalized))
+    }
+
+    function moveSelection(delta) {
+        if (!visibleTreeEntries.length)
+            return
+
+        let index = visibleIndexForPath(selectedPath)
+        if (index < 0)
+            index = delta > 0 ? -1 : visibleTreeEntries.length
+
+        index = Math.max(0, Math.min(visibleTreeEntries.length - 1, index + delta))
+        setSelectionByIndex(index)
+    }
+
+    function parentPath(path) {
+        return currentDirForPath(path)
+    }
+
+    function activateSelectedEntry() {
+        const entry = currentVisibleEntry()
+        if (!entry)
+            return
+
+        if (entry.isDirectory) {
+            if (isExpanded(entry.path))
+                setExpanded(entry.path, false)
+            else
+                setExpanded(entry.path, true)
+            setSelectionByPath(entry.path)
+            return
+        }
+
+        setSelectionByPath(entry.path)
+        root.fileClicked(entry.path)
+    }
+
+    function collapseSelectedEntry() {
+        const entry = currentVisibleEntry()
+        if (!entry)
+            return
+
+        if (entry.isDirectory && isExpanded(entry.path)) {
+            setExpanded(entry.path, false)
+            setSelectionByPath(entry.path)
+            return
+        }
+
+        const parent = parentPath(entry.path)
+        if (parent && parent !== entry.path)
+            setSelectionByPath(parent)
+    }
+
+    function expandSelectedEntry() {
+        const entry = currentVisibleEntry()
+        if (!entry)
+            return
+
+        if (!entry.isDirectory)
+            return
+
+        if (!isExpanded(entry.path)) {
+            setExpanded(entry.path, true)
+            setSelectionByPath(entry.path)
+            return
+        }
+
+        const firstChild = visibleEntryAt(visibleIndexForPath(entry.path) + 1)
+        if (firstChild && firstChild.depth > entry.depth)
+            setSelectionByPath(firstChild.path)
+    }
+
+    function setDropTarget(path) {
+        dropTargetPath = normalizedPath(path)
+    }
+
+    function clearDropTarget(path) {
+        if (path === undefined || path === null || path === "" || !dropTargetPath || normalizedPath(path) === dropTargetPath)
+            dropTargetPath = ""
+    }
+
+    function clearClipboard() {
+        clipboardPath = ""
+        clipboardMode = ""
+    }
+
+    function copyPathEntryToClipboard(path) {
+        clipboardPath = normalizedPath(path)
+        clipboardMode = "copy"
+    }
+
+    function cutPathToClipboard(path) {
+        clipboardPath = normalizedPath(path)
+        clipboardMode = "cut"
+    }
+
+    function copyRelativePathToClipboard(path) {
+        const absPath = normalizedPath(path)
+        const workspace = root.agent && root.agent.workspacePath ? normalizedPath(root.agent.workspacePath) : ""
+        let relative = absPath
+        const workspacePrefix = workspace ? (workspace.endsWith("/") ? workspace : workspace + "/") : ""
+        if (workspace && (absPath === workspace || absPath.startsWith(workspacePrefix))) {
+            relative = absPath.slice(workspace.length).replace(/^\/+/, "")
+        }
+        if (root.agent && root.agent.copyPathToClipboard)
+            root.agent.copyPathToClipboard(relative)
+    }
+
+    function pasteClipboardInto(dirPath) {
+        if (!clipboardPath || !root.agent)
+            return false
+
+        const destinationDir = normalizedPath(dirPath || root.agent.workspacePath || "")
+        if (!destinationDir)
+            return false
+
+        let ok = false
+        if (clipboardMode === "cut") {
+            ok = root.agent.moveWorkspacePath(clipboardPath, destinationDir)
+            if (ok)
+                clearClipboard()
+        } else {
+            ok = root.agent.copyWorkspacePath(clipboardPath, destinationDir)
+        }
+
+        if (ok)
+            refreshAfterWorkspaceMutation(destinationDir)
+        return ok
+    }
+
+    function movePathIntoDirectory(sourcePath, destinationDir) {
+        if (!root.agent)
+            return false
+
+        const source = normalizedPath(sourcePath)
+        const dest = normalizedPath(destinationDir)
+        if (!source || !dest)
+            return false
+
+        const ok = root.agent.moveWorkspacePath(source, dest)
+        if (ok)
+            refreshAfterWorkspaceMutation(dest)
+        return ok
+    }
+
     function openCreateDialog(dirPath, directory) {
         pendingActionMode = directory ? "new-folder" : "new-file"
-        pendingTargetDirPath = dirPath || root.agent.workspacePath || ""
+        pendingTargetDirPath = normalizedPath(dirPath || (root.agent && root.agent.workspacePath) || "")
         pendingTargetPath = ""
         pendingName = directory ? "new_folder" : "new_file.txt"
         entryDialog.open()
@@ -137,21 +342,21 @@ Item {
 
     function openRenameDialog(path) {
         pendingActionMode = "rename"
-        pendingTargetPath = path
+        pendingTargetPath = normalizedPath(path)
         pendingTargetDirPath = currentDirForPath(path)
         pendingName = baseName(path)
         entryDialog.open()
     }
 
     function openDeleteDialog(path) {
-        pendingDeletePath = path
+        pendingDeletePath = normalizedPath(path)
         pendingDeleteName = baseName(path)
         deleteDialog.open()
     }
 
     function submitEntryDialog() {
         const name = nameField.text.trim()
-        if (!name)
+        if (!name || !root.agent)
             return
 
         let ok = false
@@ -163,39 +368,50 @@ Item {
 
         if (ok) {
             if (pendingActionMode !== "rename")
-                root.setExpanded(pendingTargetDirPath, true)
-            root.updateSearchExpansion()
-            root.revealCurrentFile()
+                setExpanded(pendingTargetDirPath, true)
+            refreshAfterWorkspaceMutation(pendingTargetDirPath)
             entryDialog.close()
         }
     }
 
     function submitDeleteDialog() {
+        if (!root.agent)
+            return
+
         const ok = root.agent.deleteWorkspacePath(pendingDeletePath)
         if (ok) {
-            root.updateSearchExpansion()
-            root.revealCurrentFile()
+            refreshAfterWorkspaceMutation(currentDirForPath(pendingDeletePath))
             deleteDialog.close()
         }
     }
 
+    function refreshAfterWorkspaceMutation(path) {
+        clearDropTarget()
+        updateSearchExpansion()
+        refreshVisibleTree()
+        revealCurrentFile()
+        if (path)
+            setExpanded(path, true)
+    }
+
     function updateSearchExpansion() {
         const query = root.filterText.trim()
-        if (!query || !root.agent.workspacePath) {
+        if (!query || !root.agent || !root.agent.workspacePath) {
             searchExpandedPaths = ({})
             searchMatches = []
             searchFocusPath = ""
+            refreshVisibleTree()
             return
         }
 
         const matches = root.agent.searchWorkspacePaths(query)
         searchMatches = matches
         searchFocusPath = matches.length ? matches[0] : ""
-        const next = {}
-        const workspace = root.agent.workspacePath
 
+        const next = {}
+        const workspace = normalizedPath(root.agent.workspacePath)
         for (let i = 0; i < matches.length; ++i) {
-            const filePath = matches[i]
+            const filePath = normalizedPath(matches[i])
             if (!filePath.startsWith(workspace))
                 continue
 
@@ -212,19 +428,21 @@ Item {
         }
 
         searchExpandedPaths = next
+        refreshVisibleTree()
         if (searchFocusPath)
             searchFocusTimer.restart()
     }
 
     function expandAncestors(filePath) {
-        if (!filePath || !root.agent.workspacePath)
+        if (!filePath || !root.agent || !root.agent.workspacePath)
             return
 
-        const workspace = root.agent.workspacePath
-        if (!filePath.startsWith(workspace))
+        const workspace = normalizedPath(root.agent.workspacePath)
+        const absPath = normalizedPath(filePath)
+        if (!absPath.startsWith(workspace))
             return
 
-        const rel = filePath.slice(workspace.length).replace(/^\/+/, "")
+        const rel = absPath.slice(workspace.length).replace(/^\/+/, "")
         if (!rel)
             return
 
@@ -232,7 +450,7 @@ Item {
         let current = workspace
         for (let i = 0; i < parts.length - 1; ++i) {
             current += "/" + parts[i]
-            root.setExpanded(current, true)
+            setExpanded(current, true)
         }
     }
 
@@ -240,12 +458,13 @@ Item {
         if (!filePath)
             return false
 
-        const currentRoot = root.diskRoot || "/"
-        if (filePath === currentRoot || filePath.startsWith(currentRoot.endsWith("/") ? currentRoot : currentRoot + "/"))
+        const currentRoot = normalizedPath(root.diskRoot || "/")
+        const normalizedFilePath = normalizedPath(filePath)
+        if (normalizedFilePath === currentRoot || normalizedFilePath.startsWith(currentRoot.endsWith("/") ? currentRoot : currentRoot + "/"))
             return false
 
-        const workspace = root.agent.workspacePath || ""
-        if (workspace && (filePath === workspace || filePath.startsWith(workspace + "/"))) {
+        const workspace = root.agent && root.agent.workspacePath ? normalizedPath(root.agent.workspacePath) : ""
+        if (workspace && (normalizedFilePath === workspace || normalizedFilePath.startsWith(workspace + "/"))) {
             root.diskRoot = workspace
             return true
         }
@@ -261,28 +480,15 @@ Item {
             return item
         const children = item.children || []
         for (let i = 0; i < children.length; ++i) {
-            const found = root.findObjectByName(children[i], name)
+            const found = findObjectByName(children[i], name)
             if (found)
                 return found
         }
         return null
     }
 
-    function scrollCurrentFileIntoView() {
-        root.scrollPathIntoView(root.agent.currentFilePath)
-    }
-
-    function revealCurrentFile() {
-        const changedRoot = root.ensureCurrentFileRoot(root.agent.currentFilePath)
-        root.expandAncestors(root.agent.currentFilePath)
-        if (changedRoot)
-            Qt.callLater(() => Qt.callLater(() => root.scrollCurrentFileIntoView()))
-        else
-            Qt.callLater(() => root.scrollCurrentFileIntoView())
-    }
-
     function scrollPathIntoView(path) {
-        const marker = root.findObjectByName(treeFlick.contentItem, path)
+        const marker = findObjectByName(treeFlick.contentItem, normalizedPath(path))
         treeFlick.currentFileMarker = marker
         if (!marker)
             return
@@ -292,11 +498,185 @@ Item {
         treeFlick.contentY = Math.max(0, Math.min(target, treeFlick.contentHeight - treeFlick.height))
     }
 
+    function scrollCurrentFileIntoView() {
+        scrollPathIntoView(root.agent ? root.agent.currentFilePath : "")
+    }
+
+    function revealCurrentFile() {
+        if (!root.agent)
+            return
+        const changedRoot = ensureCurrentFileRoot(root.agent.currentFilePath)
+        expandAncestors(root.agent.currentFilePath)
+        if (changedRoot)
+            Qt.callLater(() => Qt.callLater(() => scrollCurrentFileIntoView()))
+        else
+            Qt.callLater(() => scrollCurrentFileIntoView())
+    }
+
+    function sortEntries(entries) {
+        return entries.slice().sort((a, b) => {
+            if (a.isDirectory !== b.isDirectory)
+                return a.isDirectory ? -1 : 1
+            return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
+        })
+    }
+
+    function listChildren(path) {
+        if (!root.agent || !path)
+            return []
+        const children = root.agent.listDirectoryContents(path) || []
+        const normalized = []
+        for (let i = 0; i < children.length; ++i) {
+            const child = children[i]
+            normalized.push({
+                name: child.name || baseName(child.path),
+                path: normalizedPath(child.path),
+                isDirectory: !!child.isDirectory,
+                size: child.size || 0,
+                isSymLink: !!child.isSymLink
+            })
+        }
+        return sortEntries(normalized)
+    }
+
+    function pathMatchesQuery(entryPath, entryName, query) {
+        if (!query)
+            return true
+        const needle = query.toLowerCase()
+        return normalizedPath(entryPath).toLowerCase().includes(needle)
+            || (entryName || "").toLowerCase().includes(needle)
+    }
+
+    function hasMatchingDescendant(path, query, cache) {
+        const cached = cache[path]
+        if (cached !== undefined)
+            return cached
+
+        const children = listChildren(path)
+        for (let i = 0; i < children.length; ++i) {
+            const child = children[i]
+            if (pathMatchesQuery(child.path, child.name, query)) {
+                cache[path] = true
+                return true
+            }
+            if (child.isDirectory && hasMatchingDescendant(child.path, query, cache)) {
+                cache[path] = true
+                return true
+            }
+        }
+
+        cache[path] = false
+        return false
+    }
+
+    function buildVisibleTreeEntries(path, depth, cache) {
+        const result = []
+        if (!root.agent || !path)
+            return result
+
+        const query = root.filterText.trim()
+        const children = listChildren(path)
+        for (let i = 0; i < children.length; ++i) {
+            const child = children[i]
+            const matches = pathMatchesQuery(child.path, child.name, query)
+            const descendantMatch = child.isDirectory && query ? hasMatchingDescendant(child.path, query, cache) : false
+            if (query && !matches && !descendantMatch)
+                continue
+
+            const childExpanded = child.isDirectory && (isExpanded(child.path) || isSearchExpanded(child.path))
+            const isCurrentFile = root.agent && normalizedPath(root.agent.currentFilePath) === child.path
+            result.push({
+                name: child.name,
+                path: child.path,
+                isDirectory: child.isDirectory,
+                isExpanded: childExpanded,
+                hasChildren: child.isDirectory && listChildren(child.path).length > 0,
+                isSearchMatch: query ? matches : false,
+                isCurrentFile: isCurrentFile,
+                depth: depth
+            })
+
+            if (child.isDirectory && childExpanded) {
+                const nested = buildVisibleTreeEntries(child.path, depth + 1, cache)
+                for (let j = 0; j < nested.length; ++j)
+                    result.push(nested[j])
+            }
+        }
+        return result
+    }
+
+    function refreshVisibleTree() {
+        if (!root.agent || !root.diskRoot) {
+            visibleTreeEntries = []
+            return
+        }
+
+        const cache = {}
+        const normalized = normalizedPath(root.diskRoot)
+        visibleTreeEntries = buildVisibleTreeEntries(normalized, 0, cache)
+        ensureSelection()
+    }
+
+    function toggleFolderExpanded(path) {
+        const normalized = normalizedPath(path)
+        setExpanded(normalized, !isExpanded(normalized))
+    }
+
+    function goUpOneLevel() {
+        const current = normalizedPath(root.diskRoot)
+        if (!current || current === "/")
+            return
+
+        const parts = current.replace(/\/$/, "").split("/")
+        parts.pop()
+        const next = parts.length <= 1 ? "/" : parts.join("/")
+        root.diskRoot = next || "/"
+    }
+
+    Keys.onPressed: (event) => {
+        if (!visibleTreeEntries.length)
+            return
+
+        switch (event.key) {
+        case Qt.Key_Down:
+            moveSelection(1)
+            event.accepted = true
+            break
+        case Qt.Key_Up:
+            moveSelection(-1)
+            event.accepted = true
+            break
+        case Qt.Key_Left:
+            collapseSelectedEntry()
+            event.accepted = true
+            break
+        case Qt.Key_Right:
+            expandSelectedEntry()
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            activateSelectedEntry()
+            event.accepted = true
+            break
+        case Qt.Key_Home:
+            setSelectionByIndex(0)
+            event.accepted = true
+            break
+        case Qt.Key_End:
+            setSelectionByIndex(visibleTreeEntries.length - 1)
+            event.accepted = true
+            break
+        default:
+            break
+        }
+    }
+
     Timer {
         id: searchFocusTimer
         interval: 0
         repeat: false
-        onTriggered: root.scrollPathIntoView(root.searchFocusPath)
+        onTriggered: scrollPathIntoView(searchFocusPath)
     }
 
     Dialog {
@@ -366,9 +746,7 @@ Item {
         implicitWidth: 380
         title: "Delete"
         closePolicy: Popup.CloseOnEscape
-        onOpened: {
-            deleteConfirmButton.forceActiveFocus()
-        }
+        onOpened: deleteConfirmButton.forceActiveFocus()
 
         contentItem: ColumnLayout {
             width: 340
@@ -410,44 +788,47 @@ Item {
 
     Connections {
         target: root.agent
+        enabled: !!root.agent
         function onCurrentFilePathChanged() {
-            root.revealCurrentFile()
+            if (!root.agent) return
+            root.selectedPath = normalizedPath(root.agent.currentFilePath)
+            refreshVisibleTree()
+            revealCurrentFile()
         }
         function onWorkspacePathChanged() {
-            // Update diskRoot to the new workspace path
-            if (root.agent.workspacePath) {
-                root.diskRoot = root.agent.workspacePath
-            }
-            root.restoreExpandedPaths()
-            root.updateSearchExpansion()
-            root.revealCurrentFile()
+            if (!root.agent) return
+            root.diskRoot = root.agent.workspacePath ? normalizedPath(root.agent.workspacePath) : "/"
+            restoreExpandedPaths()
+            updateSearchExpansion()
+            refreshVisibleTree()
+            revealCurrentFile()
         }
     }
 
-    onFilterTextChanged: {
-        root.updateSearchExpansion()
-    }
+    onFilterTextChanged: updateSearchExpansion()
+    onDiskRootChanged: refreshVisibleTree()
 
     Component.onCompleted: {
-        // Prefer workspace path as the initial disk root when available.
-        // If no workspace is set, avoid defaulting to the user's home directory
-        // which previously caused the explorer to stay stuck on `/home`.
+        // Prioritize agent's workspace path
         if (root.agent && root.agent.workspacePath) {
-            root.diskRoot = root.agent.workspacePath
+            root.diskRoot = normalizedPath(root.agent.workspacePath)
         } else {
-            // If the saved diskRoot points to a home directory, prefer the filesystem root instead
-            const saved = root.diskRoot || "/"
-            if (saved.startsWith("/home/") || saved === "/home")
-                root.diskRoot = "/"
-            else
+            // Only fallback to saved value if it's reasonable
+            const saved = normalizedPath(root.diskRoot || "/")
+            if (saved && saved !== "/" && saved.startsWith("/")) {
                 root.diskRoot = saved
+            } else {
+                // Don't set to "/" to avoid security issues with listDirectoryContents
+                // Wait for workspacePathChanged signal
+                return
+            }
         }
-        root.restoreExpandedPaths()
-        root.updateSearchExpansion()
-        root.revealCurrentFile()
-    }
-
-    onDiskRootChanged: {
+        
+        restoreExpandedPaths()
+        selectedPath = normalizedPath(root.agent ? root.agent.currentFilePath : "")
+        updateSearchExpansion()
+        refreshVisibleTree()
+        revealCurrentFile()
     }
 
     Rectangle {
@@ -458,58 +839,91 @@ Item {
             anchors.fill: parent
             spacing: 0
 
-            // Header
             Rectangle {
                 Layout.fillWidth: true
                 height: 36
                 color: Theme.surfaceAlt
 
                 RowLayout {
-                    anchors { fill: parent; leftMargin: 8; rightMargin: 4 }
+                    anchors.fill: parent
+                    anchors.leftMargin: 8
+                    anchors.rightMargin: 6
                     spacing: 4
 
-                    // "Go up" button
                     ToolButton {
                         text: "↑"
                         font.pixelSize: Theme.fontSm
                         padding: 2
-                        enabled: root.diskRoot !== "/"
+                        enabled: normalizedPath(root.diskRoot) !== "/"
                         opacity: enabled ? 1.0 : 0.35
-                        onClicked: {
-                            const parts = root.diskRoot.replace(/\/$/, "").split("/")
-                            parts.pop()
-                            root.diskRoot = parts.length <= 1 ? "/" : parts.join("/")
-                        }
+                        onClicked: goUpOneLevel()
                         ToolTip.text: "Go up one level"
                         ToolTip.visible: hovered
                     }
 
-                    // Current root path label (click to jump to workspace)
                     Label {
                         Layout.fillWidth: true
-                        text: root.diskRoot === "/" ? "LOCAL DISK  /"
-                              : root.diskRoot.split("/").pop().toUpperCase() + "  " + root.diskRoot
+                        text: normalizedPath(root.diskRoot) === "/"
+                              ? "LOCAL DISK  /"
+                              : baseName(root.diskRoot).toUpperCase() + "  " + normalizedPath(root.diskRoot)
                         color: Theme.textMuted
                         font.pixelSize: Theme.fontSm
                         font.bold: true
                         elide: Text.ElideRight
                     }
 
-                    // "Jump to workspace" button
+                    ToolButton {
+                        text: "+"
+                        font.pixelSize: Theme.fontSm
+                        padding: 2
+                        enabled: !!root.agent && !!root.agent.workspacePath
+                        onClicked: openCreateDialog(normalizedPath(root.diskRoot), false)
+                        ToolTip.text: "New File"
+                        ToolTip.visible: hovered
+                    }
+
+                    ToolButton {
+                        text: "⌁"
+                        font.pixelSize: Theme.fontSm
+                        padding: 2
+                        enabled: !!root.agent && !!root.agent.workspacePath
+                        onClicked: openCreateDialog(normalizedPath(root.diskRoot), true)
+                        ToolTip.text: "New Folder"
+                        ToolTip.visible: hovered
+                    }
+
+                    ToolButton {
+                        text: "↻"
+                        font.pixelSize: Theme.fontSm
+                        padding: 2
+                        enabled: !!root.agent
+                        onClicked: refreshVisibleTree()
+                        ToolTip.text: "Refresh"
+                        ToolTip.visible: hovered
+                    }
+
+                    ToolButton {
+                        text: "▾"
+                        font.pixelSize: Theme.fontSm
+                        padding: 2
+                        enabled: Object.keys(expandedPaths).length > 0
+                        onClicked: clearExpandedPaths()
+                        ToolTip.text: "Collapse All"
+                        ToolTip.visible: hovered
+                    }
+
                     ToolButton {
                         text: "⌂"
                         font.pixelSize: Theme.fontSm
                         padding: 2
-                        visible: root.agent.workspacePath !== ""
-                        onClicked: root.diskRoot = root.agent.workspacePath
+                        visible: !!root.agent && !!root.agent.workspacePath
+                        onClicked: root.diskRoot = normalizedPath(root.agent.workspacePath)
                         ToolTip.text: "Jump to workspace"
                         ToolTip.visible: hovered
                     }
                 }
             }
 
-
-            // Filter input — VS Code style
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 26
@@ -522,10 +936,11 @@ Item {
                 border.width: 1
                 radius: 2
 
-            TextField {
-                id: searchField
-                objectName: "treeFilterField"
-                    anchors { fill: parent; margins: 1 }
+                TextField {
+                    id: searchField
+                    objectName: "treeFilterField"
+                    anchors.fill: parent
+                    anchors.margins: 1
                     placeholderText: "Filter (e.g. .cpp)"
                     text: root.filterText
                     color: Theme.textPrimary
@@ -554,20 +969,125 @@ Item {
 
                 property Item currentFileMarker: null
 
+                DropArea {
+                    anchors.fill: parent
+                    keys: ["application/x-neurx-filetree"]
+
+                    onEntered: (drag) => {
+                        const source = drag.source
+                        if (source && source.path && source.path !== normalizedPath(root.diskRoot))
+                            root.setDropTarget(root.diskRoot)
+                    }
+
+                    onExited: {
+                        if (root.dropTargetPath === normalizedPath(root.diskRoot))
+                            root.clearDropTarget(root.diskRoot)
+                    }
+
+                    onDropped: (drop) => {
+                        const source = drop.source
+                        const sourcePath = source && source.path ? source.path : ""
+                        if (!sourcePath || sourcePath === normalizedPath(root.diskRoot))
+                            return
+
+                        if (root.movePathIntoDirectory(sourcePath, normalizedPath(root.diskRoot))) {
+                            drop.acceptProposedAction()
+                            root.clearDropTarget()
+                        }
+                    }
+                }
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: root.dropTargetPath === normalizedPath(root.diskRoot) ? 2 : 0
+                    color: Theme.accent
+                    visible: height > 0
+                }
+
                 Column {
                     id: treeColumn
                     width: treeFlick.width
 
-                    FileTreeItem {
-                        width: parent.width
-                        panel: root
-                        dirPath: root.diskRoot
-                        depth: 0
-                        filterText: root.filterText
-                        onFileClicked: (path) => root.fileClicked(path)
-                        onFolderNavigationRequested: (folderPath) => {
-                            root.diskRoot = folderPath
-                            root.revealCurrentFile()
+                    Repeater {
+                        model: root.visibleTreeEntries
+
+                        delegate: FileTreeItem {
+                            required property var modelData
+                            width: treeColumn.width
+                            panel: root
+                            path: modelData.path
+                            name: modelData.name
+                            isDirectory: modelData.isDirectory
+                            isExpanded: modelData.isExpanded
+                            hasChildren: modelData.hasChildren
+                            isSearchMatch: modelData.isSearchMatch
+                            isCurrentFile: modelData.isCurrentFile
+                            isDropTarget: root.dropTargetPath === modelData.path
+                            isSelected: root.selectedPath === modelData.path
+                            depth: modelData.depth
+                            objectName: modelData.path
+                            onFileClicked: (path) => {
+                                root.setSelectionByPath(path)
+                                root.fileClicked(path)
+                            }
+                            onFolderNavigationRequested: (folderPath) => {
+                                root.setSelectionByPath(folderPath)
+                                root.toggleFolderExpanded(folderPath)
+                            }
+                        }
+                    }
+
+                    Item {
+                        width: treeColumn.width
+                        height: root.visibleTreeEntries.length === 0 ? 180 : 0
+                        visible: root.visibleTreeEntries.length === 0
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 8
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: root.filterText.trim()
+                                      ? "No matches"
+                                      : (root.agent && root.agent.workspaceRecentFiles.length > 0
+                                         ? "Recent Files"
+                                         : "No files in workspace")
+                                color: Theme.textMuted
+                                font.pixelSize: Theme.fontSm
+                            }
+
+                            ListView {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: false
+                                implicitHeight: contentHeight
+                                clip: true
+                                visible: !root.filterText.trim() && root.agent && root.agent.workspaceRecentFiles.length > 0
+                                model: root.agent ? root.agent.workspaceRecentFiles : []
+
+                                delegate: ItemDelegate {
+                                    width: ListView.view.width
+                                    height: 24
+                                    text: modelData
+
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: Theme.textPrimary
+                                        font.pixelSize: Theme.fontXs
+                                        elide: Text.ElideRight
+                                    }
+
+                                    background: Rectangle {
+                                        color: parent.hovered ? Theme.surfaceAlt : "transparent"
+                                        radius: 2
+                                    }
+
+                                    onClicked: root.fileClicked(modelData)
+                                }
+                            }
                         }
                     }
                 }

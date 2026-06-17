@@ -12,6 +12,7 @@ Menu {
     // Properties
     property string targetPath: ""
     property bool isDirectory: false
+    property bool canPaste: false
 
     // Signals
     signal newFile()
@@ -60,6 +61,7 @@ Menu {
 
     MenuItem {
         text: "Paste"
+        enabled: canPaste
         onTriggered: contextMenu.paste()
     }
 
