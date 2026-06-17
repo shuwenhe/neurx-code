@@ -12,6 +12,7 @@ Item {
     property string filterText: ""
 
     signal fileClicked(string path)
+    signal folderNavigationRequested(string folderPath)
 
     implicitHeight: column.implicitHeight
 
@@ -77,7 +78,7 @@ Item {
 
                     onClicked: {
                         if (modelData.isDirectory) {
-                            console.log("Folder clicked:", modelData.name)
+                            root.folderNavigationRequested(modelData.path)
                         } else {
                             root.fileClicked(modelData.path)
                         }

@@ -565,6 +565,10 @@ Item {
                         depth: 0
                         filterText: root.filterText
                         onFileClicked: (path) => root.fileClicked(path)
+                        onFolderNavigationRequested: (folderPath) => {
+                            root.diskRoot = folderPath
+                            root.revealCurrentFile()
+                        }
                     }
                 }
             }
