@@ -27,7 +27,7 @@ QJsonObject AgentFileWriterTool::parametersSchema() const
     operation["description"] = "Type of file operation";
     properties["operation"] = operation;
     
-    properties["path"] = QJsonObject{{"type", "string"}, {"description", "File path relative to workspace"}};
+    properties["path"] = QJsonObject{{"type", "string"}, {"description", "File path relative to workspace, or an absolute path inside the workspace"}};
     properties["content"] = QJsonObject{{"type", "string"}, {"description", "File content"}};
     
     QJsonObject mode;
@@ -58,12 +58,26 @@ QJsonObject AgentFileWriterTool::parametersSchema() const
 
 ToolResult AgentFileWriterTool::execute(const QString &callId, const QJsonObject &args)
 {
-    const QString operation = args["operation"].toString();
+    // Make 'operation' optional - default to write_single if not provided
+    QString operation = args["operation"].toString();
+    if (operation.isEmpty()) {
+        // If path and content are provided without operation, assume write_single
+        if (args.contains("path") && args.contains("content")) {
+            qDebug() << "[AgentFileWriterTool] No operation specified, defaulting to write_single";
+            operation = "write_single";
+        }
+    }
+    
+    qDebug() << "[AgentFileWriterTool] execute() called with operation:" << operation 
+             << "path:" << args["path"].toString();
+    
     if (operation == "write_single") return opWriteSingle(callId, args);
     else if (operation == "write_batch") return opWriteBatch(callId, args);
     else if (operation == "update_file") return opUpdateFile(callId, args);
     else if (operation == "write_template") return opWriteTemplate(callId, args);
     else if (operation == "create_structure") return opCreateStructure(callId, args);
+    
+    qDebug() << "[AgentFileWriterTool] Unknown operation:" << operation;
     return {callId, name(), true, "Unknown operation: " + operation};
 }
 
@@ -80,8 +94,14 @@ ToolResult AgentFileWriterTool::opWriteSingle(const QString &callId, const QJson
     const bool backup = args.value("backup").toBool(true);
     const bool validateContent = args.value("validate").toBool(true);
 
+    qDebug() << "[AgentFileWriterTool::opWriteSingle] Writing to:" << path 
+             << "size:" << content.length() << "bytes";
+
     const QString safeFilePath = safePath(path);
-    if (safeFilePath.isEmpty()) return {callId, name(), true, "Path traversal detected"};
+    if (safeFilePath.isEmpty()) {
+        qDebug() << "[AgentFileWriterTool::opWriteSingle] Path traversal detected for:" << path;
+        return {callId, name(), true, "Path traversal detected"};
+    }
 
     if (validateContent) {
         QString validationError;
@@ -102,12 +122,17 @@ ToolResult AgentFileWriterTool::opWriteSingle(const QString &callId, const QJson
 
     QString writeError;
     if (!writeFileAtomically(safeFilePath, content, writeError)) {
+        qDebug() << "[AgentFileWriterTool::opWriteSingle] Write failed:" << writeError;
         if (!backupPath.isEmpty() && QFileInfo::exists(backupPath)) {
             QFile::remove(safeFilePath);
             QFile::rename(backupPath, safeFilePath);
+            qDebug() << "[AgentFileWriterTool::opWriteSingle] Restored from backup";
         }
         return {callId, name(), true, "Write failed: " + writeError};
     }
+
+    qDebug() << "[AgentFileWriterTool::opWriteSingle] File written successfully:" << safeFilePath 
+             << "size:" << content.length() << "bytes";
 
     QJsonObject result;
     result["path"] = path;
@@ -257,10 +282,27 @@ ToolResult AgentFileWriterTool::opCreateStructure(const QString &callId, const Q
 
 QString AgentFileWriterTool::safePath(const QString &relativePath) const
 {
-    if (relativePath.contains("..") || relativePath.startsWith("/")) return {};
-    const QString absPath = QDir(m_workspaceRoot).absoluteFilePath(relativePath);
-    if (!absPath.startsWith(m_workspaceRoot)) return {};
-    return absPath;
+    const QString rawPath = relativePath.trimmed();
+    if (rawPath.isEmpty())
+        return {};
+
+    const QString workspaceRoot = QDir(m_workspaceRoot).absolutePath();
+    const QFileInfo pathInfo(rawPath);
+    const QString absPath = pathInfo.isAbsolute()
+        ? QDir::cleanPath(pathInfo.absoluteFilePath())
+        : QDir(workspaceRoot).absoluteFilePath(rawPath);
+    const QString normalizedAbsPath = QDir::cleanPath(absPath);
+
+    if (normalizedAbsPath == workspaceRoot)
+        return {};
+
+    const QString workspacePrefix = workspaceRoot.endsWith('/')
+        ? workspaceRoot
+        : workspaceRoot + '/';
+    if (!normalizedAbsPath.startsWith(workspacePrefix))
+        return {};
+
+    return normalizedAbsPath;
 }
 
 bool AgentFileWriterTool::writeFileAtomically(const QString &filePath, const QString &content, QString &errorMsg)

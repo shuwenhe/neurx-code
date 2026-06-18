@@ -45,8 +45,11 @@ public:
 
     QString name() const override { return "agent_file_writer"; }
     QString description() const override {
-        return "Write, update, and manage files from agent execution. Supports single/batch writes, "
-               "templates, atomic operations, and checkpoints. Use when agent needs to create/modify files.";
+        return "REAL FILE SYSTEM TOOL - Actually creates and modifies files on the user's local disk. "
+               "This is NOT a simulation - files you create with this tool WILL exist on disk. "
+               "Write, update, and manage files from agent execution. Supports single/batch writes, "
+               "templates, atomic operations, and checkpoints. "
+               "IMPORTANT: When user asks to create a file, you MUST call this tool to actually create it.";
     }
 
     QJsonObject parametersSchema() const override;

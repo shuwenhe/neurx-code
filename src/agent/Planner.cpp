@@ -31,9 +31,10 @@ QJsonArray Planner::buildTools(const QString &providerId, const AgentToolRegistr
     }
     
     QJsonArray tools;
-    if (providerId == "openai") {
+    if (providerId == "openai" || providerId == "ollama") {
         tools = registry->toOpenAISchema();
-        qDebug() << "[Planner] Built OpenAI schema with" << tools.size() << "tools";
+        qDebug() << "[Planner] Built OpenAI-compatible schema with" << tools.size()
+                 << "tools for provider" << providerId;
     } else if (providerId == "gemini") {
         tools = registry->toGeminiSchema();
         qDebug() << "[Planner] Built Gemini schema with" << tools.size() << "tools";

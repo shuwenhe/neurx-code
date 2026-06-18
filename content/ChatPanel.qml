@@ -31,8 +31,9 @@ Item {
     property bool autoFollowLatest: true
     property bool messageListHovered: false
     property bool autoScrollingList: false
+    property bool userInitiatedScroll: false
     property int scrollRetryCount: 0
-    readonly property int maxScrollRetries: 3
+    readonly property int maxScrollRetries: 8
     property int lastManualScrollTime: 0
     readonly property var filteredSlashCommands: (function() {
         const q = root.slashQuery.trim().toLowerCase()
@@ -101,40 +102,29 @@ Item {
                     }
                 }
                 onContentHeightChanged: {
-                    // Always scroll to bottom when content changes and autoFollowLatest is true
                     if (root.autoFollowLatest && !root.autoScrollingList) {
                         root.scrollToBottom()
                     }
                 }
+                onMovementStarted: {
+                    if (!root.autoScrollingList)
+                        root.userInitiatedScroll = true
+                }
                 onMovementEnded: {
                     if (root.autoScrollingList)
                         return
-                    
-                    // 如果我们刚完成自动滚动（scrollRetryCount 仍 > 0），不要改变 autoFollowLatest
-                    if (root.scrollRetryCount > 0)
+
+                    if (!root.userInitiatedScroll)
                         return
-                    
-                    // 记录用户手动滚动的时间
+
                     root.lastManualScrollTime = Date.now()
-                    
-                    // 改进的底部检测：只有当用户明确滚动到非底部位置时才禁用自动跟随
-                    // 保持 autoFollowLatest 为 true（因为消息应该继续自动滚动到最新）
-                    const isAtBottom = root.isListViewAtBottom()
-                    if (!isAtBottom && (listView.contentHeight > listView.height)) {
-                        // 用户明确滚动到非底部，禁用自动跟随
-                        root.autoFollowLatest = false
-                    }
+                    root.autoFollowLatest = root.isListViewAtBottom()
+                    root.userInitiatedScroll = false
                 }
 
                 onContentYChanged: {
-                    // 当用户往上滚动时（往旧消息方向），禁用自动跟随
-                    if (!root.autoScrollingList && listView.moving) {
-                        // 如果有可滚动的内容且用户滚动到非底部位置
-                        if (listView.contentHeight > listView.height && 
-                            (listView.contentY + listView.height + 48) < listView.contentHeight) {
-                            root.autoFollowLatest = false
-                        }
-                    }
+                    if (!root.autoScrollingList && root.userInitiatedScroll && !root.isListViewAtBottom())
+                        root.autoFollowLatest = false
                 }
 
                 delegate: Item {
@@ -278,6 +268,17 @@ Item {
 
                 HoverHandler {
                     onHoveredChanged: root.messageListHovered = hovered
+                }
+
+                WheelHandler {
+                    target: null
+                    onWheel: function(event) {
+                        if (!root.autoScrollingList) {
+                            root.userInitiatedScroll = true
+                            root.lastManualScrollTime = Date.now()
+                        }
+                        event.accepted = false
+                    }
                 }
             }
         }
@@ -890,6 +891,7 @@ Item {
             return
 
         root.autoScrollingList = true
+        root.userInitiatedScroll = false
         root.scrollRetryCount = 0
         performScrollStep()
     }
@@ -906,12 +908,11 @@ Item {
 
         listView.positionViewAtEnd()
 
-        if (root.scrollRetryCount < root.maxScrollRetries - 1) {
+        if (!root.isListViewAtBottom() && root.scrollRetryCount < root.maxScrollRetries - 1) {
             root.scrollRetryCount += 1
             scrollRetryTimer.restart()
         } else {
             root.autoScrollingList = false
-            // 确保 autoFollowLatest 保持 true 以便后续新消息继续自动滚动
             root.autoFollowLatest = true
         }
     }
@@ -976,7 +977,7 @@ Item {
 
     Timer {
         id: scrollRetryTimer
-        interval: 50
+        interval: 16
         repeat: false
         onTriggered: root.performScrollStep()
     }

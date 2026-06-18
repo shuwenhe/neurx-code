@@ -30,7 +30,16 @@ You are NeurX Code, an expert software engineering AI assistant.
 You have access to tools that let you read and write files, run shell commands,
 and search the codebase. Use them to complete coding tasks accurately.
 
+CRITICAL: All tools you have access to are REAL and FUNCTIONAL. When the user asks you
+to create, edit, or write files, you MUST use the appropriate tool to actually perform
+the operation. DO NOT just show code - EXECUTE the tool to create/modify files.
+Your tools directly interact with the user's local filesystem and will create real files.
+When describing your tools, do not invent "simulated environment", "theoretical only",
+or "cannot execute in the real environment" limitations unless an actual runtime error
+or approval policy has already produced that exact restriction.
+
 Guidelines:
+- IMPORTANT: When user asks to create/write a file, you MUST actually use the file writing tool to create it.
 - Always read relevant files before making changes.
 - Prefer targeted edits over rewriting entire files.
 - Run tests after making changes when test tooling is available.
@@ -44,6 +53,28 @@ static QString logMessagePreview(const QString &text, int maxLen = 120)
     if (compact.size() <= maxLen)
         return compact;
     return compact.left(maxLen) + QStringLiteral("...");
+}
+
+static QString previewRequestToolNames(const QJsonArray &tools, int maxCount = 8)
+{
+    QStringList names;
+    const int limit = qMin(maxCount, tools.size());
+    for (int i = 0; i < limit; ++i) {
+        const QJsonObject tool = tools.at(i).toObject();
+        const QJsonObject function = tool.value(QStringLiteral("function")).toObject();
+        const QString name = function.value(QStringLiteral("name")).toString();
+        if (!name.isEmpty())
+            names << name;
+    }
+    if (tools.size() > limit)
+        names << QStringLiteral("...+%1 more").arg(tools.size() - limit);
+    return names.join(QStringLiteral(", "));
+}
+
+static QString previewToolArguments(const QJsonObject &args, int maxLen = 180)
+{
+    const QString json = QString::fromUtf8(QJsonDocument(args).toJson(QJsonDocument::Compact));
+    return logMessagePreview(json, maxLen);
 }
 
 static QString askForApprovalToString(AskForApproval value)
@@ -718,7 +749,8 @@ void AgentEngine::runLoop()
                   << "model=" << (req.model.isEmpty() ? m_activeModel : req.model)
                   << "iteration=" << iterations
                   << "messages=" << req.messages.size()
-                  << "tools=" << req.tools.size();
+                  << "tools=" << req.tools.size()
+                  << "toolNames=[" << previewRequestToolNames(req.tools) << "]";
 
         setStatus(AgentStatus::Thinking);
 
@@ -768,6 +800,12 @@ void AgentEngine::runLoop()
         qInfo().noquote() << "[agent] response received:"
                           << "content=" << logMessagePreview(response.message.content)
                           << "toolCalls=" << response.message.toolCalls.size();
+        for (const ToolCall &call : response.message.toolCalls) {
+            qInfo().noquote() << "[agent] tool call:"
+                              << "name=" << call.name
+                              << "id=" << call.id
+                              << "args=" << previewToolArguments(call.arguments);
+        }
 
         appendMessage(response.message);
         if (m_taskOrchestrator) {

@@ -48,8 +48,11 @@ public:
     
     QString name() const override { return "Write"; }
     QString description() const override {
-        return "Create a new file or overwrite an existing file with the given content. "
-               "Automatically creates parent directories if needed.";
+        return "REAL FILE SYSTEM TOOL - Creates actual files on the user's local disk. "
+               "This is NOT a simulation - when you use this tool, files WILL be created. "
+               "Create a new file or overwrite an existing file with the given content. "
+               "Automatically creates parent directories if needed. "
+               "IMPORTANT: When user asks to create/write a file, you MUST call this tool.";
     }
     QJsonObject parametersSchema() const override;
     ToolResult execute(const QString& callId, const QJsonObject& args) override;

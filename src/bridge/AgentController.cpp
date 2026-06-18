@@ -118,9 +118,17 @@ You are operating as a code agent, not a chat assistant.
 You have access to tools that let you read and write files, apply patches,
 run shell commands (both local and sandboxed Docker), and search the codebase.
 
+CRITICAL: All tools listed below are REAL and FUNCTIONAL. When the user asks you to create,
+edit, or write files, you MUST use the appropriate tool (Write, agent_file_writer, Edit, etc.)
+to actually perform the operation. DO NOT just show code - EXECUTE the tool to create/modify files.
+These tools directly interact with the user's local filesystem and will create real files.
+
 ## Available Tools
 
-**Claude Standard File Operations:**
+All tools listed below are executable NeurX Code tools. When they appear in the tool registry,
+they are real runtime capabilities, not documentation examples.
+
+**Executable File Operations:**
 - Write: Create a new file or overwrite existing file (file_path, new_text)
 - Edit: Modify files by text replacement (file_path, old_text, new_text) - old_text must match exactly
 - MultiEdit: Apply multiple edits to one file (file_path, edits[]) - batch edits atomically
@@ -130,10 +138,10 @@ run shell commands (both local and sandboxed Docker), and search the codebase.
 - file_creation: Atomic file creation and overwrite with validation and checkpoint support
 - incremental_edit: Line-range edits with insert, replace, delete, append, and batch preview
 
-**Claude Standard System Operations:**
+**Executable System Operations:**
 - Bash: Execute shell commands (command, timeout?) - runs in workspace context
 
-**Claude Standard Search Operations:**
+**Executable Search Operations:**
 - Grep: Search for patterns (pattern, path?, case_sensitive?, max_results?) - regex support
 - Glob: List files matching pattern (pattern, include_hidden?, max_results?) - supports ** globs
 
@@ -158,10 +166,11 @@ Agentic Lifecycle:
 5. OBSERVE: Read command output, verify changes with 'Read', iterate until complete.
 
 Guidelines:
+- IMPORTANT: When user asks to create/write a file, you MUST actually use Write or agent_file_writer tool to create it. Do not just show code without calling the tool.
 - For every coding task, form a concise plan before editing.
 - For non-trivial tasks, use update_plan or todo to maintain a current step list.
 - Always use 'Read' to examine files before making changes.
-- For simple file creation, use 'Write' tool.
+- For simple file creation, use 'Write' tool or 'agent_file_writer' tool - both create REAL files on disk.
 - For targeted text replacements, use 'Edit' tool with exact old_text match.
 - For multiple related edits in one file, use 'MultiEdit' to ensure atomicity.
 - For contextual Codex-style edits, use 'apply_patch'. For unified diffs, use 'patch'.
@@ -174,6 +183,17 @@ Guidelines:
 - If verification fails, inspect and iterate until fixed.
 - Explain your reasoning briefly before each significant action.
 - Ask for clarification if the task is ambiguous.
+
+Reality constraints:
+- You are running inside the NeurX Code desktop app with real tool access, not a text-only environment.
+- When a workspace is open, tools such as 'Write', 'Edit', 'MultiEdit', 'agent_file_writer', 'file_creation', and 'codex_file_system' can actually create and modify files inside that workspace.
+- When asked to describe your tools, do not invent limitations such as "the tool is only theoretical", "cannot run in the real environment", or "the user must always do this manually" unless a real tool call or policy check has already produced that exact restriction.
+- If a workspace has not been opened yet, say that the workspace path must be set first. Do not rewrite that into a fake "simulated environment" limitation.
+- If approval is required, say approval is required. Do not rewrite that into a fake "tool cannot really execute" limitation.
+- Never claim that file-writing tools are only theoretical, simulated, unavailable, or require the user to manually execute commands unless a real tool call has already failed.
+- Do not tell the user to manually create or paste files when a write-capable tool is available.
+- If a write fails, state the exact tool name and the exact error returned by the tool.
+- If the user asks for a tool list, describe each tool's purpose and real execution scope succinctly. Do not add a "limitations" column unless the limitation comes from actual runtime policy.
 )";
 
 static const char kSiliconFlowOpenAIEndpoint[] = "http://111.202.231.146:8080/qwen2_5_vl_7b";
@@ -2105,6 +2125,44 @@ static QString attachmentSummaryText(const QVariantList &attachments)
     return QStringLiteral("[attachments] %1").arg(parts.join(QStringLiteral(", ")));
 }
 
+static bool shouldAutoSearchKnowledge(const QString &text)
+{
+    const QString normalized = text.simplified();
+    if (normalized.size() < 24)
+        return false;
+
+    const QString lower = normalized.toLower();
+    static const QStringList keywords = {
+        QStringLiteral("file"),
+        QStringLiteral("workspace"),
+        QStringLiteral("project"),
+        QStringLiteral("code"),
+        QStringLiteral("implement"),
+        QStringLiteral("fix"),
+        QStringLiteral("bug"),
+        QStringLiteral("error"),
+        QStringLiteral("test"),
+        QStringLiteral("function"),
+        QStringLiteral("class"),
+        QStringLiteral("module"),
+        QStringLiteral("search"),
+        QStringLiteral("explain"),
+        QStringLiteral("review"),
+        QStringLiteral("refactor"),
+        QStringLiteral("change"),
+        QStringLiteral("why"),
+        QStringLiteral("how"),
+        QStringLiteral("where")
+    };
+
+    for (const QString &keyword : keywords) {
+        if (lower.contains(keyword))
+            return true;
+    }
+
+    return lower.contains('/') || lower.contains('.') || lower.contains(QStringLiteral("::"));
+}
+
 static QVariantList attachmentListFromVariantMaps(const QList<QVariantMap> &maps)
 {
     QVariantList list;
@@ -2574,10 +2632,13 @@ QString AgentController::approvalRiskLevelForTool(const QString &toolName, const
         return name == QStringLiteral("run_docker_command") ? QStringLiteral("low") : QStringLiteral("high");
     }
 
+    // agent_file_writer is medium risk for better auto-approval support
+    if (name == QStringLiteral("agent_file_writer"))
+        return QStringLiteral("medium");
+
     if (name == QStringLiteral("Write")
         || name == QStringLiteral("file_system")
         || name == QStringLiteral("codex_file_system")
-        || name == QStringLiteral("agent_file_writer")
         || name == QStringLiteral("file_creation")
         || name == QStringLiteral("smart_file_creator")
         || name == QStringLiteral("patch")
@@ -2643,6 +2704,9 @@ bool AgentController::toolNeedsApproval(const QString &toolName, const QVariantM
     if (!m_approvalManager) {
         if (reason)
             *reason = QStringLiteral("No approval manager configured.");
+        // Auto-approve medium and low risk when autoApproveTools is enabled
+        if (m_autoApproveTools && risk != QStringLiteral("high") && risk != QStringLiteral("critical"))
+            return false;
         return !m_autoApproveTools || risk == QStringLiteral("high") || risk == QStringLiteral("critical");
     }
 
@@ -4334,6 +4398,19 @@ void AgentController::appendSessionStoreMessage(const QString &role, const QStri
 void AgentController::refreshSystemPrompt()
 {
     QString prompt = kControllerSystemPrompt.trimmed();
+    QStringList runtimeFacts;
+    runtimeFacts << QStringLiteral("- Current workspace: %1")
+                        .arg(m_workspacePath.isEmpty() ? QStringLiteral("(none)") : m_workspacePath);
+    runtimeFacts << QStringLiteral("- Auto-approve safe tools: %1")
+                        .arg(m_autoApproveTools ? QStringLiteral("enabled") : QStringLiteral("disabled"));
+    runtimeFacts << QStringLiteral("- Read-only mode: %1")
+                        .arg(m_approvalManager && m_approvalManager->isReadOnlyMode()
+                                 ? QStringLiteral("enabled")
+                                 : QStringLiteral("disabled"));
+    runtimeFacts << QStringLiteral("- File edits must stay inside the current workspace unless a tool explicitly reports otherwise.");
+    runtimeFacts << QStringLiteral("- If a write-capable tool is available, prefer using it over describing hypothetical manual steps.");
+    prompt += QStringLiteral("\n\nCurrent execution context:\n") + runtimeFacts.join('\n');
+
     const QString workspaceSummary = m_workspaceContext ? m_workspaceContext->buildContextSummary() : QString{};
     const QString indexSummary = m_workspaceIndex ? m_workspaceIndex->buildContextSummary() : QString{};
 
@@ -4384,6 +4461,12 @@ void AgentController::refreshSystemPrompt()
         prompt += "\n\n" + skillLines.join('\n');
     }
 
+    qInfo().noquote() << "[AgentController] System prompt refreshed."
+                      << "workspace=" << (m_workspacePath.isEmpty() ? QStringLiteral("(none)") : m_workspacePath)
+                      << "autoApprove=" << (m_autoApproveTools ? QStringLiteral("true") : QStringLiteral("false"))
+                      << "readOnly=" << (m_approvalManager && m_approvalManager->isReadOnlyMode() ? QStringLiteral("true") : QStringLiteral("false"))
+                      << "realToolGuardrails=true";
+
     m_engine->setSystemPrompt(prompt);
     emit workspaceSummaryChanged();
 }
@@ -4433,7 +4516,9 @@ void AgentController::configurePolicyManagers()
 {
     if (m_approvalManager) {
         ApprovalPolicy policy;
-        policy.defaultPolicy = AskForApproval::OnRequest;
+        // Let the risk engine auto-approve safe writes, while granular rules
+        // still force prompts for protected resources.
+        policy.defaultPolicy = AskForApproval::Never;
         policy.defaultReviewer = ApprovalsReviewer::User;
         policy.readOnlyMode = false;
         policy.doubleConfirmPatterns = {
@@ -6493,8 +6578,9 @@ void AgentController::submitToAgent(const QString &text, const QVariantList &att
     m_streamingAssistantActive = false;
     appendSessionStoreMessage(QStringLiteral("user"), sessionText);
 
-    // 🧠 RAG: Auto-search knowledge base for relevant context if available
-    if (m_registry && !text.isEmpty()) {
+    // 🧠 RAG: Only auto-search when the prompt looks like a code/workspace task.
+    // This avoids a synchronous lookup on short or conversational prompts.
+    if (m_registry && shouldAutoSearchKnowledge(text)) {
         if (auto *knowledgeTool = qobject_cast<KnowledgeTool *>(m_registry->tool("knowledge"))) {
             QString error;
             QVariantList results = knowledgeTool->searchEntries(text, 5, &error);
