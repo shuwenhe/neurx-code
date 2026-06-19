@@ -1,89 +1,38 @@
-# 🧪 快速测试: 在 hello.cc 中写入 C++ "Hello, World!"
+# 快速测试指南
 
-**任务**: 通过 Agent 在 `/Users/feifei/agent/neurx-code/src/hello.cc` 中写入 C++ 代码
+## 🚀 立即测试
 
----
-
-## 📍 当前状态
-
-✅ **Agent 应用**: 运行中  
-✅ **工具**: agent_file_writer 已注册  
-✅ **编译**: 成功  
-✅ **准备**: 就绪  
-
----
-
-## 🎯 测试操作
-
-### 步骤 1: 在 Agent 中输入以下提示词
-
-复制下面的文本，粘贴到 neurx-code Agent 输入窗口：
-
-```
-Write a C++ program that outputs "Hello, World!" and save it to src/hello.cc
-
-The program should:
-1. Include iostream header
-2. Have a main function
-3. Use std::cout to print "Hello, World!"
-4. Return 0
-
-Make sure the file is created with proper formatting.
-```
-
----
-
-### 步骤 2: 观察 Agent 执行
-
-Agent 应该：
-
-1. **识别工具需求**
-   ```
-   I'll use the agent_file_writer tool to create this C++ file.
-   ```
-
-2. **调用工具**
-   ```json
-   {
-     "tool": "agent_file_writer",
-     "operation": "write_single",
-     "path": "src/hello.cc",
-     "content": "#include <iostream>\n\nint main() {\n    std::cout << \"Hello, World!\" << std::endl;\n    return 0;\n}\n",
-     "create_dirs": true
-   }
-   ```
-
-3. **返回结果**
-   ```json
-   {
-     "path": "src/hello.cc",
-     "size": 87,
-     "status": "success"
-   }
-   ```
-
----
-
-### 步骤 3: 验证文件创建
-
-打开终端，运行以下命令验证：
-
-#### A. 检查文件是否存在
+### 步骤1: 启动neurx-code
 ```bash
-ls -lh /Users/feifei/agent/neurx-code/src/hello.cc
+/Users/feifei/agent/neurx-code/build/neurx-codeApp.app/Contents/MacOS/neurx-codeApp
 ```
 
-**预期输出**:
+### 步骤2: 配置
+1. **设置工作空间**: 选择一个空目录（例如 `/tmp/test-workspace`）
+2. **启用自动批准**: Settings → Safety → "Auto-approve safe tools" = **ON**
+3. **选择Provider**: OpenAI (SiliconFlow) 或 Anthropic
+
+### 步骤3: 测试命令
 ```
--rw-r--r--  1 feifei  staff   87B Jun 11 17:30 hello.cc
+创建hello.cc文件，内容为Hello World程序
 ```
 
-#### B. 查看文件内容
+### 步骤4: 验证结果
+
+#### 应该看到:
+✅ Agent生成代码  
+✅ 调用agent_file_writer工具  
+✅ 文件自动创建（无需手动批准）  
+✅ 显示成功消息  
+
+#### 文件验证:
 ```bash
-cat /Users/feifei/agent/neurx-code/src/hello.cc
+# 在工作空间目录中
+ls -lh hello.cc
+cat hello.cc
 ```
 
-**预期输出**:
+应该显示：
 ```cpp
 #include <iostream>
 
@@ -93,131 +42,145 @@ int main() {
 }
 ```
 
-#### C. 编译并运行文件
+---
+
+## 🔍 查看详细日志
+
+### 启动并捕获日志
 ```bash
+/Users/feifei/agent/neurx-code/build/neurx-codeApp.app/Contents/MacOS/neurx-codeApp 2>&1 | tee /tmp/neurx-debug.log
+```
+
+### 在另一个终端查看日志
+```bash
+tail -f /tmp/neurx-debug.log | grep -E "AgentFileWriterTool|tool result"
+```
+
+### 期望看到的日志
+```
+[AgentFileWriterTool] No operation specified, defaulting to write_single
+[AgentFileWriterTool] execute() called with operation: write_single path: hello.cc
+[AgentFileWriterTool::opWriteSingle] Writing to: hello.cc size: 123 bytes
+[AgentFileWriterTool::opWriteSingle] File written successfully: /tmp/test-workspace/hello.cc size: 123 bytes
+[agent] tool result: agent_file_writer callId=call_xxx error=false
+```
+
+---
+
+## ❌ 故障排除
+
+### 问题: 文件没有创建
+
+#### 检查1: 工具是否被调用？
+```bash
+grep "AgentFileWriterTool" /tmp/neurx-debug.log
+```
+
+**如果没有输出:**
+- LLM没有生成工具调用
+- 尝试更明确的提示: "使用agent_file_writer工具创建hello.cc文件"
+- 切换到支持工具调用的模型
+
+#### 检查2: Auto-approve是否启用？
+Settings → Safety → "Auto-approve safe tools" 必须为 **ON**
+
+#### 检查3: 工作空间路径是否设置？
+必须先设置工作空间路径（在UI中）
+
+#### 检查4: 查看错误日志
+```bash
+grep -E "error|Error|failed|Failed" /tmp/neurx-debug.log
+```
+
+### 问题: 需要手动批准
+
+**可能原因:**
+- Auto-approve未启用
+- 使用的是旧版本（编译时间早于 2026-06-18 11:27）
+
+**解决方法:**
+```bash
+# 检查可执行文件时间
+ls -lh /Users/feifei/agent/neurx-code/build/neurx-codeApp.app/Contents/MacOS/neurx-codeApp
+
+# 如果时间早于 11:27，重新编译
 cd /Users/feifei/agent/neurx-code
-g++ src/hello.cc -o hello
-./hello
+cmake --build build --target neurx-codeApp -j4
 ```
 
-**预期输出**:
-```
-Hello, World!
-```
+### 问题: 工具被调用但写入失败
 
----
-
-## ✅ 成功条件
-
-✅ 文件 `/Users/feifei/agent/neurx-code/src/hello.cc` 被创建  
-✅ 文件内容包含 `#include <iostream>`  
-✅ 文件内容包含 `std::cout << "Hello, World!"`  
-✅ 文件可以被编译  
-✅ 程序运行时输出 "Hello, World!"  
-
----
-
-## 💡 如果测试失败
-
-### 问题 1: Agent 未调用文件写入工具
-
-**解决方案**:
-- 确保 neurx-code 应用已启动
-- 尝试更明确的提示词：
-  ```
-  Use the agent_file_writer tool to create a file at src/hello.cc 
-  with a C++ Hello World program
-  ```
-
-### 问题 2: 文件未被创建
-
-**检查步骤**:
-1. src/ 目录是否存在？
-   ```bash
-   ls -d /Users/feifei/agent/neurx-code/src/ || echo "Not found"
-   ```
-
-2. 是否有写权限？
-   ```bash
-   test -w /Users/feifei/agent/neurx-code/src && echo "Writable"
-   ```
-
-3. 查看 Agent 日志中的错误信息
-
-### 问题 3: 文件内容不正确
-
-- 检查是否有多个 hello.cc 文件
-- 查看最新的文件（时间戳）
-- 检查是否有 backup 文件：
-  ```bash
-  ls -la /Users/feifei/agent/neurx-code/src/hello.cc*
-  ```
-
----
-
-## 📊 测试结果报告模板
-
-```markdown
-# 测试结果
-
-**日期**: [日期]  
-**测试人员**: [姓名]  
-**测试工具**: agent_file_writer  
-**测试场景**: 在 hello.cc 中写入 C++ Hello World
-
-## 结果
-
-- [ ] Agent 识别了工具需求
-- [ ] 工具被成功调用
-- [ ] 文件被成功创建
-- [ ] 文件内容正确
-- [ ] 文件可以编译
-- [ ] 程序运行正常
-
-## 观察
-
-[描述你的观察和任何特殊情况]
-
-## 结论
-
-[总结测试结果]
-```
-
----
-
-## 🔗 相关命令快速参考
-
+**查看详细错误:**
 ```bash
-# 启动应用
-/Users/feifei/agent/neurx-code/build/neurx-codeApp.app/Contents/MacOS/neurx-codeApp
+grep "AgentFileWriterTool" /tmp/neurx-debug.log | grep -E "failed|error"
+```
 
-# 检查进程
-pgrep -f neurx-codeApp
+**常见原因:**
+1. 路径穿越检测 - 使用相对路径
+2. 权限问题 - 检查工作空间目录权限
+3. 磁盘空间不足
 
-# 查看文件
-cat /Users/feifei/agent/neurx-code/src/hello.cc
+---
 
-# 编译测试
-g++ /Users/feifei/agent/neurx-code/src/hello.cc -o /tmp/hello
+## 📋 完整测试案例
 
-# 运行测试
-/tmp/hello
+### 测试1: 单文件创建
+```
+创建hello.cc文件，内容为Hello World程序
+```
 
-# 清理测试
-rm -f /Users/feifei/agent/neurx-code/src/hello.cc* /tmp/hello
+### 测试2: 多文件创建
+```
+创建main.cpp和util.h两个文件，一个是主程序，一个是工具头文件
+```
+
+### 测试3: 更新文件
+```
+将hello.cc中的World改为neurx-code
+```
+
+### 测试4: 创建目录结构
+```
+创建src/目录，并在其中创建main.cpp
 ```
 
 ---
 
-## 🎉 完成！
+## ✅ 成功标志
 
-你已经成功配置和部署了 AgentFileWriterTool！
+如果看到以下现象，说明修复成功：
 
-现在可以通过 Agent 使用 `agent_file_writer` 工具来：
-- ✅ 创建文件
-- ✅ 修改文件内容
-- ✅ 批量创建文件
-- ✅ 生成代码模板
-- ✅ 创建目录结构
+1. ✅ 文件自动创建，**无需手动批准**
+2. ✅ 日志显示 "defaulting to write_single"
+3. ✅ 日志显示 "File written successfully"
+4. ✅ 文件内容与Agent生成的代码一致
+5. ✅ 可以连续创建多个文件
 
-**祝测试顺利！** 🚀
+---
+
+## 📊 性能指标
+
+正常情况下：
+- 响应时间: 2-5秒
+- 文件创建: 即时（<100ms）
+- CPU占用: 低
+- 内存占用: ~400MB
+
+---
+
+## 🎯 下一步
+
+修复验证后，可以测试更复杂的场景：
+- 创建完整的C++项目结构
+- 实现多文件程序
+- 重构现有代码
+- 添加新功能到现有文件
+
+所有这些操作现在都应该**自动执行**，无需手动批准每一步！
+
+---
+
+**编译版本**: 2026-06-18 11:27  
+**文件大小**: 55MB  
+**修复状态**: ✅ 完整  
+**测试准备**: ✅ 就绪
