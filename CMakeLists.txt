@@ -19,7 +19,7 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
 endif()
 
-find_package(Qt6 6.2 REQUIRED COMPONENTS Core Gui Qml Quick Network Concurrent)
+find_package(Qt6 6.2 REQUIRED COMPONENTS Core Gui Qml Quick Network Concurrent Widgets)
 find_package(Qt6 OPTIONAL_COMPONENTS WebSockets)
 
 find_path(SQLITE3_INCLUDE_DIR
@@ -111,6 +111,7 @@ target_link_libraries(neurx_core PUBLIC
     Qt6::Quick
     Qt6::Network
     Qt6::Concurrent
+    Qt6::Widgets
     sqlite3
 )
 
@@ -160,6 +161,7 @@ target_link_libraries(neurx-codeApp PRIVATE
     Qt6::Quick
     Qt6::Network
     Qt6::Concurrent
+    Qt6::Widgets
 )
 
 # Optional WebSockets support

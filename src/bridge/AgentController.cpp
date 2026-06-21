@@ -84,6 +84,7 @@
 
 #include "services/KeyBindingManager.h"
 #include <QFile>
+#include <QFileDialog>
 #include <QGuiApplication>
 #include <QClipboard>
 #include <QBuffer>
@@ -3090,8 +3091,17 @@ bool AgentController::executeCommand(const QString &commandId)
 bool AgentController::openWorkspaceFolder(const QString &path)
 {
     if (path.trimmed().isEmpty()) {
-        emit openWorkspaceFolderRequested();
-        return true;
+        const QString startDir = m_workspacePath.isEmpty()
+            ? QDir::homePath()
+            : m_workspacePath;
+        const QString selectedDir = QFileDialog::getExistingDirectory(
+            nullptr,
+            QStringLiteral("Open Folder"),
+            startDir,
+            QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+        if (selectedDir.isEmpty())
+            return false;
+        return openWorkspaceFolder(selectedDir);
     }
 
     const QString normalizedPath = normalizeWorkspaceComparablePath(resolveWorkspaceSelectionPath(path));
@@ -3107,8 +3117,17 @@ bool AgentController::openWorkspaceFolder(const QString &path)
 bool AgentController::openWorkspaceFile(const QString &path)
 {
     if (path.trimmed().isEmpty()) {
-        emit openWorkspaceFileRequested();
-        return true;
+        const QString startDir = m_workspacePath.isEmpty()
+            ? QDir::homePath()
+            : m_workspacePath;
+        const QString selectedFile = QFileDialog::getOpenFileName(
+            nullptr,
+            QStringLiteral("Open Workspace File"),
+            startDir,
+            QStringLiteral("Workspace files (*.code-workspace);;All files (*)"));
+        if (selectedFile.isEmpty())
+            return false;
+        return openWorkspaceFile(selectedFile);
     }
 
     const QString selectedPath = resolveWorkspaceSelectionPath(path);

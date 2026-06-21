@@ -51,6 +51,61 @@ static QJsonObject parseToolArguments(const QString &rawArgs, const QString &cal
     return obj;
 }
 
+template <typename PendingCalls>
+static void appendPendingToolCalls(PendingCalls &pendingCalls, LLMResponse &response)
+{
+    if (!response.message.toolCalls.isEmpty())
+        return;
+
+    for (auto it = pendingCalls.cbegin(); it != pendingCalls.cend(); ++it) {
+        const auto &pending = it.value();
+        if (pending.id.isEmpty() || pending.name.isEmpty())
+            continue;
+
+        ToolCall tc;
+        tc.id = pending.id;
+        tc.name = pending.name;
+        tc.arguments = parseToolArguments(pending.args, pending.id);
+        response.message.toolCalls.append(tc);
+    }
+}
+
+template <typename PendingCalls>
+static void finalizeOpenAIResponse(PendingCalls &pendingCalls,
+                                   const QString &streamText,
+                                   LLMResponse &response)
+{
+    appendPendingToolCalls(pendingCalls, response);
+    response.message.role = MessageRole::Assistant;
+    response.message.content = streamText;
+}
+
+template <typename PendingCalls>
+static void parseOpenAIChoice(const QJsonObject &choice,
+                              PendingCalls &pendingCalls,
+                              QString &streamText)
+{
+    const QJsonObject message = choice.value(QStringLiteral("message")).toObject();
+    if (!message.isEmpty()) {
+        const QString content = message.value(QStringLiteral("content")).toString();
+        if (!content.isEmpty())
+            streamText += content;
+
+        for (const auto &tcVal : message.value(QStringLiteral("tool_calls")).toArray()) {
+            const auto tc = tcVal.toObject();
+            const int idx = tc.value(QStringLiteral("index")).toInt(pendingCalls.size());
+            const auto fn = tc.value(QStringLiteral("function")).toObject();
+            auto &pending = pendingCalls[idx];
+            if (tc.contains(QStringLiteral("id")))
+                pending.id = tc.value(QStringLiteral("id")).toString();
+            if (fn.contains(QStringLiteral("name")))
+                pending.name = fn.value(QStringLiteral("name")).toString();
+            if (fn.contains(QStringLiteral("arguments")))
+                pending.args += fn.value(QStringLiteral("arguments")).toString();
+        }
+    }
+}
+
 OpenAIProvider::OpenAIProvider(QObject *parent)
     : LLMProvider(parent)
     , m_nam(new QNetworkAccessManager(this))
@@ -66,21 +121,17 @@ QStringList OpenAIProvider::availableModels() const
 void OpenAIProvider::sendRequest(const LLMRequest &request)
 {
     if (m_reply) cancel();
-    if (m_apiKey.trimmed().isEmpty()) {
-        emit requestError(
-            "OpenAI-compatible API key is empty. Set it in Settings, via env (SILICONFLOW_API_KEY / OPENAI_API_KEY / OPENAI_COMPATIBLE_API_KEY / NEURX_API_KEY), or in ~/.config/neurx-code/secrets.env."
-        );
-        return;
-    }
 
     const QString endpoint = m_endpoint.isEmpty() ? QString::fromUtf8(kBaseUrl) : m_endpoint;
     const QString model = request.model.isEmpty() ? QString::fromUtf8(kDefaultModel) : request.model;
     qInfo().noquote() << "[openai] sendRequest endpoint=" << endpoint
-                      << "model=" << model;
+                      << "model=" << model
+                      << "hasApiKey=" << !m_apiKey.trimmed().isEmpty();
 
     QNetworkRequest req{QUrl(endpoint)};
     req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    req.setRawHeader("Authorization", ("Bearer " + m_apiKey).toUtf8());
+    if (!m_apiKey.trimmed().isEmpty())
+        req.setRawHeader("Authorization", ("Bearer " + m_apiKey).toUtf8());
 
     const QByteArray body = QJsonDocument(buildRequestBody(request)).toJson(QJsonDocument::Compact);
     m_reply = m_nam->post(req, body);
@@ -115,6 +166,23 @@ void OpenAIProvider::sendRequest(const LLMRequest &request)
             m_errorBuffer.clear();
             emit requestError(errMsg);
         } else {
+            if (!m_buffer.trimmed().isEmpty()) {
+                const QByteArray trailing = m_buffer.trimmed();
+                if (trailing.startsWith("data:")) {
+                    qInfo().noquote() << "[openai] finishing with trailing SSE buffer bytes=" << trailing.size();
+                    handleStreamChunk(QByteArray("\n"));
+                } else {
+                    qInfo().noquote() << "[openai] finishing with non-SSE JSON fallback bytes=" << trailing.size();
+                    const QJsonObject obj = QJsonDocument::fromJson(trailing).object();
+                    const auto choices = obj.value(QStringLiteral("choices")).toArray();
+                    if (!choices.isEmpty())
+                        parseOpenAIChoice(choices.first().toObject(), m_pendingToolCalls, m_streamText);
+                }
+            }
+            finalizeOpenAIResponse(m_pendingToolCalls, m_streamText, m_partialResponse);
+            qInfo().noquote() << "[openai] finalized response:"
+                              << "contentChars=" << m_partialResponse.message.content.size()
+                              << "toolCalls=" << m_partialResponse.message.toolCalls.size();
             m_errorBuffer.clear();
             emit responseComplete(m_partialResponse);
         }
@@ -233,19 +301,10 @@ void OpenAIProvider::handleStreamChunk(const QByteArray &chunk)
         if (!line.startsWith("data: ")) continue;
         const QString data = line.mid(6);
         if (data == "[DONE]") {
-            for (auto it = m_pendingToolCalls.cbegin(); it != m_pendingToolCalls.cend(); ++it) {
-                const auto &pending = it.value();
-                if (pending.id.isEmpty() || pending.name.isEmpty())
-                    continue;
-
-                ToolCall tc;
-                tc.id = pending.id;
-                tc.name = pending.name;
-                tc.arguments = parseToolArguments(pending.args, pending.id);
-                m_partialResponse.message.toolCalls.append(tc);
-            }
-            m_partialResponse.message.role    = MessageRole::Assistant;
-            m_partialResponse.message.content = m_streamText;
+            finalizeOpenAIResponse(m_pendingToolCalls, m_streamText, m_partialResponse);
+            qInfo().noquote() << "[openai] received [DONE]:"
+                              << "contentChars=" << m_partialResponse.message.content.size()
+                              << "toolCalls=" << m_partialResponse.message.toolCalls.size();
             TokenEvent te; te.type = TokenEvent::Type::MessageEnd;
             emit tokenReceived(te);
             continue;
@@ -254,6 +313,11 @@ void OpenAIProvider::handleStreamChunk(const QByteArray &chunk)
         const QJsonObject obj = QJsonDocument::fromJson(data.toUtf8()).object();
         const auto choices = obj["choices"].toArray();
         if (choices.isEmpty()) continue;
+        if (choices.first().toObject().contains(QStringLiteral("message"))) {
+            qInfo().noquote() << "[openai] parsed non-stream message chunk";
+            parseOpenAIChoice(choices.first().toObject(), m_pendingToolCalls, m_streamText);
+            continue;
+        }
         parseDelta(choices.first().toObject()["delta"].toObject());
     }
 }

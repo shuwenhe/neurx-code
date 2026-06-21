@@ -1,7 +1,7 @@
 // Copyright (C) 2024 NeurX Code
 // SPDX-License-Identifier: GPL-3.0-only
 
-#include <QGuiApplication>
+#include <QApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QIcon>
@@ -44,7 +44,7 @@ int main(int argc, char *argv[])
 {
     set_qt_environment();
 
-    QGuiApplication app(argc, argv);
+    QApplication app(argc, argv);
     app.setApplicationName("NeurX Code");
     app.setOrganizationName("NeurX");
     app.setOrganizationDomain("neurx.ai");

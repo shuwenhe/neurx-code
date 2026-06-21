@@ -14,6 +14,41 @@ ApplicationWindow {
     title: "NeurX Code — " + (agentCtx ? agentCtx.workspacePath || "No workspace" : "No workspace")
     color: Theme.bg
 
+    Action {
+        id: openFolderAction
+        text: qsTr("Open Folder...")
+        shortcut: "Ctrl+K,Ctrl+O"
+        onTriggered: agentCtx.openWorkspaceFolder()
+    }
+
+    menuBar: MenuBar {
+        Menu {
+            title: qsTr("&File")
+
+            MenuItem {
+                action: openFolderAction
+            }
+
+            MenuItem {
+                text: qsTr("Open Workspace File...")
+                onTriggered: agentCtx.openWorkspaceFile()
+            }
+
+            MenuItem {
+                text: qsTr("Open Recent...")
+                onTriggered: openRecentPopup.open()
+            }
+
+            MenuSeparator {}
+
+            MenuItem {
+                text: qsTr("Close Folder")
+                enabled: !!agentCtx.workspacePath
+                onTriggered: agentCtx.workspacePath = ""
+            }
+        }
+    }
+
     property string recentWorkspacesJson: "[]"
     property int lastAgentTabIndex: 0
     property bool sidebarVisible: true
